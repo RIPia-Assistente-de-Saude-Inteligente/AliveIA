@@ -1,0 +1,5 @@
+# API do Gemini
+google-generativeai==0.7.2
+
+# Gerenciamento de configurações
+python-dotenv==1.0.1
