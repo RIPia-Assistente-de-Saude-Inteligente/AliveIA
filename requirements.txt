@@ -28,3 +28,9 @@ typing-inspection==0.4.1
 typing_extensions==4.14.1
 uritemplate==4.2.0
 urllib3==2.5.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+aiosqlite==0.21.0
+asyncpg==0.30.0
+pydantic-settings==2.7.1
