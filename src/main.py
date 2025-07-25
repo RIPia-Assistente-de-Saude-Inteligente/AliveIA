@@ -13,7 +13,7 @@ from config.settings import settings
 from database.connection import db_manager
 
 # Import routers
-from routes import patients
+from routes import patients, booking
 
 app = FastAPI(
     title="Sistema de Agendamento Médico",
@@ -52,7 +52,8 @@ async def health_check():
     }
 
 # Include routers
-app.include_router(patients.router, prefix="/api/v1/patients", tags=["patients"])
+app.include_router(patients.router, prefix="/api/v1/patients", tags=["Patients"])
+app.include_router(booking.router, prefix="/api/v1/booking", tags=["Booking"])
 
 if __name__ == "__main__":
     uvicorn.run(
