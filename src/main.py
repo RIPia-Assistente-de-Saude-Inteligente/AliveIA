@@ -4,6 +4,7 @@ FastAPI main application for the medical appointment system.
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ from config.settings import settings
 from database.connection import db_manager
 
 # Import routers
-from routes import patients, booking
+from routes import patients, booking, ai_booking
 
 app = FastAPI(
     title="Sistema de Agendamento Médico",
@@ -54,6 +55,18 @@ async def health_check():
 # Include routers
 app.include_router(patients.router, prefix="/api/v1/patients", tags=["Patients"])
 app.include_router(booking.router, prefix="/api/v1/booking", tags=["Booking"])
+app.include_router(ai_booking.router, prefix="/api/v1/ai-booking", tags=["AI Booking"])
+
+# Serve static files (frontend)
+frontend_path = Path(__file__).parent.parent / "frontend"
+if frontend_path.exists():
+    app.mount("/static", StaticFiles(directory=str(frontend_path)), name="static")
+    
+    @app.get("/chat")
+    async def chat_interface():
+        """Serve the chat interface."""
+        from fastapi.responses import FileResponse
+        return FileResponse(str(frontend_path / "index.html"))
 
 if __name__ == "__main__":
     uvicorn.run(
