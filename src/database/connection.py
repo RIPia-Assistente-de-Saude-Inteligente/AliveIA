@@ -60,6 +60,7 @@ db_manager = DatabaseManager()
 
 async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:
     """Dependency for getting database connection."""
+    await db_manager.initialize_database() # Ensure schema is applied
     conn = await db_manager.get_connection()
     try:
         yield conn
