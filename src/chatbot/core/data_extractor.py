@@ -93,40 +93,47 @@ class ConsultationDataExtractor:
     
     def generate_missing_data_questions(self, extracted_data: Dict[str, Any]) -> str:
         """
-        Gera perguntas para completar dados faltantes
-        
-        Args:
-            extracted_data: Dados já extraídos
-            
-        Returns:
-            String com perguntas para dados faltantes
+        Gera perguntas para completar dados faltantes (pode perguntar mais de um campo por vez)
+        Sempre inclui o CPF se estiver faltando.
         """
         try:
+            if not extracted_data or not isinstance(extracted_data, dict):
+                extracted_data = self._get_empty_response()
+            for section in ['paciente', 'agendamento_info', 'preferencias']:
+                if section not in extracted_data or not isinstance(extracted_data[section], dict):
+                    extracted_data[section] = {}
             missing_fields = extracted_data.get('dados_faltantes', [])
-            
             if not missing_fields:
                 return "Perfeito! Tenho todas as informações necessárias para o agendamento."
-            
-            questions_prompt = f"""
-            Você é um assistente médico que precisa coletar informações faltantes para agendamento.
-            
-            Dados já coletados: {json.dumps(extracted_data, indent=2, ensure_ascii=False)}
-            
-            Campos faltantes: {missing_fields}
-            
-            Gere perguntas amigáveis e profissionais para coletar APENAS os dados faltantes mais importantes.
-            Priorize: nome, tipo de agendamento (consulta/exame), especialidade, data preferencial.
-            
-            Seja cordial e específico. Não pergunte tudo de uma vez, foque nos dados essenciais primeiro.
-            """
-            
-            response = self.model.generate_content(questions_prompt)
-            return response.text.strip()
-            
+            perguntas = []
+            # Mapeamento para nomes amigáveis
+            nomes_amigaveis = {
+                'paciente.nome': 'Nome completo do paciente',
+                'paciente.cpf': 'CPF do paciente (apenas números, 11 dígitos)',
+                'agendamento.tipo_agendamento': 'Tipo de agendamento (consulta ou exame)',
+                'agendamento.especialidade': 'Especialidade médica desejada',
+                'paciente.data_nascimento': 'Data de nascimento do paciente (DD/MM/AAAA)',
+                'paciente.sexo': 'Sexo do paciente (M/F/O)',
+                'agendamento.tem_convenio': 'Possui convênio médico? (Sim/Não)',
+                'preferencias.data_preferencia': 'Data preferencial para o agendamento',
+                'preferencias.observacoes': 'Observações ou sintomas'
+            }
+            # Perguntas principais
+            for campo in ['paciente.nome','paciente.cpf','agendamento.tipo_agendamento','agendamento.especialidade']:
+                if campo in missing_fields:
+                    perguntas.append(f'<b>{nomes_amigaveis[campo]}</b>')
+            # Extras formatados em lista
+            extras = [campo for campo in missing_fields if campo not in ['paciente.nome','paciente.cpf','agendamento.tipo_agendamento','agendamento.especialidade']]
+            if extras:
+                perguntas.append('<b>Outros dados:</b><ul>' + ''.join(f'<li>{nomes_amigaveis.get(campo, campo.replace(".", " "))}</li>' for campo in extras) + '</ul>')
+            return (
+                'Por favor, informe os seguintes dados para prosseguir com o agendamento:<br>' +
+                '<ul>' + ''.join(f'<li>{p}</li>' for p in perguntas) + '</ul>'
+            )
         except Exception as e:
-            logger.error(f"Erro ao gerar perguntas: {e}")
-            return "Para continuar com o agendamento, preciso de mais algumas informações. Pode me ajudar?"
-    
+            logger.error(f"Erro ao gerar perguntas para dados faltantes: {e}\nDados extraídos: {extracted_data}")
+            return "Desculpe, ocorreu um erro ao gerar a próxima pergunta. Por favor, tente novamente."
+
     def _parse_json_response(self, response_text: str) -> Dict[str, Any]:
         """Parse da resposta JSON do Gemini"""
         try:
@@ -138,45 +145,49 @@ class ConsultationDataExtractor:
                 clean_response = clean_response[:-3]
             
             return json.loads(clean_response.strip())
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Erro ao parsear JSON: {e}")
-            logger.error(f"Resposta recebida: {response_text}")
+        
+        except Exception as e:
+            logger.error(f"Erro ao fazer parse do JSON da resposta do Gemini: {e}\nResposta recebida: {response_text}")
+            # Retorna resposta vazia para evitar erro 500
             return self._get_empty_response()
-    
+
     def _process_extracted_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Processa e valida os dados extraídos"""
         dados_extraidos = []
         dados_faltantes = []
-        
         # Verificar dados do paciente
         paciente = data.get('paciente', {})
         for campo in ['nome', 'cpf', 'data_nascimento', 'sexo']:
+            valor = paciente.get(campo)
+            if isinstance(valor, str) and valor.strip() == '':
+                paciente[campo] = None
             if paciente.get(campo):
                 dados_extraidos.append(f"paciente.{campo}")
             else:
                 dados_faltantes.append(f"paciente.{campo}")
-        
         # Verificar dados do agendamento
         agendamento_info = data.get('agendamento_info', {})
         for campo in ['tipo_agendamento', 'especialidade', 'tem_convenio']:
+            valor = agendamento_info.get(campo)
+            if isinstance(valor, str) and valor.strip() == '':
+                agendamento_info[campo] = None
             if agendamento_info.get(campo) is not None:
                 dados_extraidos.append(f"agendamento.{campo}")
             else:
                 dados_faltantes.append(f"agendamento.{campo}")
-        
         # Verificar preferências
         preferencias = data.get('preferencias', {})
         for campo in ['data_preferencia', 'observacoes']:
+            valor = preferencias.get(campo)
+            if isinstance(valor, str) and valor.strip() == '':
+                preferencias[campo] = None
             if preferencias.get(campo):
                 dados_extraidos.append(f"preferencias.{campo}")
             else:
                 dados_faltantes.append(f"preferencias.{campo}")
-        
         # Atualizar listas no resultado
         data['dados_extraidos'] = dados_extraidos
         data['dados_faltantes'] = dados_faltantes
-        
         return data
     
     def _get_empty_response(self) -> Dict[str, Any]:
@@ -237,3 +248,20 @@ class ConsultationDataExtractor:
             "can_proceed": len(missing_essential) <= 1,  # Pode prosseguir se faltar apenas 1 campo essencial
             "completion_percentage": (len(essential_fields) - len(missing_essential)) / len(essential_fields) * 100
         }
+
+    def merge_extracted_data(self, previous: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Mescla os dados já coletados com os novos dados extraídos da mensagem atual.
+        Sempre prioriza valores não nulos do novo dado.
+        """
+        result = previous.copy() if previous else {}
+        for section in ['paciente', 'agendamento_info', 'preferencias']:
+            if section not in result or not isinstance(result[section], dict):
+                result[section] = {}
+            for key, value in new.get(section, {}).items():
+                if value not in [None, '', []]:
+                    result[section][key] = value
+                elif key not in result[section]:
+                    result[section][key] = None
+        # Atualiza listas de extraídos/faltantes
+        return self._process_extracted_data(result)

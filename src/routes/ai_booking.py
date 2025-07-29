@@ -44,7 +44,7 @@ async def process_booking_message(
         
         # Extract data using Gemini
         extracted_data = extractor.extract_consultation_data(message)
-        
+        print(extracted_data)
         # Validate essential data
         validation = extractor.validate_essential_data(extracted_data)
         
@@ -89,6 +89,9 @@ async def create_booking_from_ai(
     """
     try:
         extracted_data = ai_data.get("extracted_data", {})
+
+        if "dados_extraidos" not in extracted_data:
+            extracted_data = extractor._process_extracted_data(extracted_data)
         
         # Validate data completeness
         validation = extractor.validate_essential_data(extracted_data)

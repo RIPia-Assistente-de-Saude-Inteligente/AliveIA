@@ -74,7 +74,7 @@ async function sendMessage() {
     updateUI();
     
     try {
-        // Process message with AI
+        // Volta a enviar apenas a mensagem, sem estado acumulado
         const response = await fetch(`${API_BASE_URL}/ai-booking/process-message`, {
             method: 'POST',
             headers: {
@@ -179,16 +179,22 @@ async function showPatientsModal() {
     
     try {
         const response = await fetch(`${API_BASE_URL}/patients/`);
+        if (!response.ok) {
+            // Se a resposta não for 2xx, mostre erro específico
+            const errorText = await response.text();
+            document.getElementById('patientsList').innerHTML = `<p>❌ Erro ao carregar pacientes: ${response.status} - ${errorText}</p>`;
+            return;
+        }
         const data = await response.json();
-        
-        if (data.success && data.data) {
-            displayPatients(data.data);
+        if ((data.success || Array.isArray(data)) && (data.data || Array.isArray(data))) {
+            // Suporta resposta como { success: true, data: [...] } ou apenas [...]
+            displayPatients(data.data || data);
         } else {
             document.getElementById('patientsList').innerHTML = '<p>❌ Erro ao carregar pacientes</p>';
         }
     } catch (error) {
         console.error('Error:', error);
-        document.getElementById('patientsList').innerHTML = '<p>❌ Erro de conexão</p>';
+        document.getElementById('patientsList').innerHTML = `<p>❌ Erro de conexão: ${error.message}</p>`;
     }
 }
 

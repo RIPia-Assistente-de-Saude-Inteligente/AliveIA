@@ -4,6 +4,14 @@ import { handleAIResponse, addMessage, showLoading, updateUI, displayPatients } 
 
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
+function markdownToHtml(text) {
+    // Negrito: **texto**
+    let html = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+    // Quebra de linha: \n
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
 export async function sendMessageToAI(message) {
     showLoading(true);
     conversationState.isProcessing = true;
@@ -51,7 +59,7 @@ export async function createAppointmentFromAI() {
         if (data.success) {
             const appointment = data.appointment_data;
             const successMessage = `\n🎉 **Agendamento criado com sucesso!**\n\n📋 **Detalhes do Agendamento:**\n• **ID:** ${appointment.id_agendamento}\n• **Paciente:** ${appointment.paciente_nome}\n• **Médico:** ${appointment.medico_nome}\n• **Especialidade:** ${appointment.especialidade_nome}\n• **Data/Hora:** ${formatDateTime(appointment.data_hora_inicio)}\n• **Local:** ${appointment.local_nome}\n• **Convênio:** ${appointment.convenio_nome || 'Particular'}\n• **Observações:** ${appointment.observacoes || 'Nenhuma'}\n\n✅ Seu agendamento foi confirmado!\n            `;
-            addMessage(successMessage, 'success');
+            addMessage(markdownToHtml(successMessage), 'success');
             conversationState.canCreateAppointment = false;
             updateUI();
         } else {

@@ -113,7 +113,11 @@ export function handleAIResponse(data) {
     conversationState.validationStatus = data.validation;
     conversationState.canCreateAppointment = data.can_proceed;
     if (data.status === 'need_more_info') {
-        addMessage('🤖 ' + data.next_question, 'bot');
+        // Formatar mensagem com quebras de linha e detalhes em negrito
+        let formatted = data.next_question
+            .replace(/\n/g, '<br>')
+            .replace(/(nome|cpf|data de nascimento|sexo|tipo de agendamento|especialidade|convênio|data|horário|observações)/gi, match => `<strong>${match}</strong>`);
+        addMessage('🤖 ' + formatted, 'bot');
     } else if (data.status === 'ready_to_book') {
         addMessage('✅ ' + data.message + '\n\n📋 Dados coletados com sucesso! Você pode revisar as informações no painel lateral e criar o agendamento.', 'success');
     }
