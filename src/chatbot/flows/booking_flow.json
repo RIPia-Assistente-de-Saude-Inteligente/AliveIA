@@ -1,4 +1,5 @@
 {
+
   "initial_state": "GREETING",
   "states": {
     "GREETING": {
@@ -10,13 +11,18 @@
       }
     },
     "GET_SPECIALTY": {
-      "message": "Qual a especialidade médica que você procura?",
+      "message": "Para começar, escolha a especialidade médica desejada:",
       "extract": "agendamento_info.especialidade",
-      "next_state": "GET_PATIENT_NAME"
+      "next_state": "GET_LOCATION"
     },
     "GET_EXAM_TYPE": {
       "message": "Qual o nome do exame que você gostaria de agendar?",
       "extract": "agendamento_info.nome_exame",
+      "next_state": "GET_LOCATION"
+    },
+    "GET_LOCATION": {
+      "message": "Ótimo! Agora, escolha o local para atendimento (apenas locais que atendem a especialidade escolhida):",
+      "extract": "agendamento_info.local",
       "next_state": "GET_PATIENT_NAME"
     },
     "GET_PATIENT_NAME": {
@@ -65,7 +71,7 @@
       "next_state": "CONFIRMATION"
     },
     "CONFIRMATION": {
-      "message": "Perfeito! Vou revisar todos os dados coletados:\n\n📋 **Dados do Paciente:**\n• Nome: {paciente.nome}\n• CPF: {paciente.cpf}\n• Data de Nascimento: {paciente.data_nascimento}\n• Sexo: {paciente.sexo}\n\n📞 **Contato:**\n• Telefone: {contato.telefone}\n• Email: {contato.email}\n\n🏥 **Agendamento:**\n• Tipo: {agendamento_info.tipo}\n• {especialidade_ou_exame}: {agendamento_info.especialidade}{agendamento_info.nome_exame}\n• Data Preferida: {preferencias.data_preferencia}\n• Horário Preferido: {preferencias.horario_preferencia}\n• Convênio: {agendamento_info.convenio}\n\nTodos os dados estão corretos? Posso prosseguir com o agendamento?",
+      "message": "Perfeito! Vou revisar todos os dados coletados:\n\n📋 **Dados do Paciente:**\n• Nome: {paciente.nome}\n• CPF: {paciente.cpf}\n• Data de Nascimento: {paciente.data_nascimento}\n• Sexo: {paciente.sexo}\n\n📞 **Contato:**\n• Telefone: {contato.telefone}\n• Email: {contato.email}\n\n🏥 **Agendamento:**\n• Tipo: {agendamento_info.tipo}\n• {especialidade_ou_exame}: {agendamento_info.especialidade}{agendamento_info.nome_exame}\n• Local: {agendamento_info.local}\n• Data Preferida: {preferencias.data_preferencia}\n• Horário Preferido: {preferencias.horario_preferencia}\n• Convênio: {agendamento_info.convenio}\n\nTodos os dados estão corretos? Posso prosseguir com o agendamento?",
       "transitions": {
         "sim": "END",
         "correto": "END",
