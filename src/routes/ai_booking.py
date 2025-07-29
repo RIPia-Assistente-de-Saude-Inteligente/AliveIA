@@ -51,23 +51,32 @@ async def process_booking_message(
         # Se o usuário chegou ao estado END após confirmar, cria automaticamente o agendamento
         if conversation_update.get("current_state") == "END":
             try:
+                # LOG CRÍTICO: Dados que serão enviados para criação
+                logging.info(f"🔍 DADOS CONVERSATION_DATA: {conversation_update.get('conversation_data')}")
+                
                 # Cria o agendamento automaticamente
                 appointment_result = await create_appointment_from_ai({
                     "extracted_data": conversation_update.get("conversation_data")
                 }, db)
                 
+                # LOG CRÍTICO: Resultado da criação
+                logging.info(f"🔍 APPOINTMENT_RESULT: {appointment_result}")
+                
                 # Atualiza a mensagem para incluir os detalhes do agendamento
+                appointment_data = appointment_result['appointment_data']
+                logging.info(f"🔍 APPOINTMENT_DATA EXTRAÍDO: {appointment_data}")
                 success_message = f"""✅ {conversation_update.get("next_question")}
 
 🎉 **Agendamento criado com sucesso!**
 
 📋 **Detalhes do Agendamento:**
-• **ID:** {appointment_result['data']['appointment_id']}
-• **Paciente:** {appointment_result['data']['patient_name']}
-• **Data/Hora:** {appointment_result['data']['appointment_date']} às {appointment_result['data']['appointment_time']}
-• **Tipo:** {appointment_result['data']['type']}
-• **Especialidade:** {appointment_result['data']['specialty_or_exam']}
-• **Contato:** {appointment_result['data']['contact_phone']}"""
+• **ID:** {appointment_data['id_agendamento']}
+• **Paciente:** {appointment_data['nome_paciente']}
+• **Médico:** {appointment_data['nome_medico']}
+• **Especialidade:** {appointment_data['especialidade']}
+• **Data/Hora:** {appointment_data['data_agendamento']}
+• **Local:** {appointment_data['local']}
+• **Convênio:** {appointment_data['convenio']}"""
 
                 response = {
                     "success": True,
@@ -78,7 +87,7 @@ async def process_booking_message(
                     "status": "appointment_created",
                     "can_proceed": False,
                     "validation": {"is_valid": True},
-                    "appointment_data": appointment_result['data']
+                    "appointment_data": appointment_result['appointment_data']
                 }
                 
                 return response
@@ -331,38 +340,74 @@ async def create_appointment_from_ai(
             hour=hora_fim.hour, minute=hora_fim.minute
         )
 
-        # Cria o agendamento
-        # Para este MVP, usamos valores padrão para campos não coletados pelo chatbot
-        appointment_create = AgendamentoCreate(
-            id_paciente=patient_id,
-            id_local=1,  # Valor padrão - pode ser configurado posteriormente
-            id_convenio=None,  # Será implementado quando tivermos cadastro de convênios
-            id_tipo_consulta=1 if agendamento_data.get("tipo") == "consulta" else None,
-            id_exame=1 if agendamento_data.get("tipo") == "exame" else None,
-            id_medico=None,  # Será implementado quando tivermos lógica de atribuição
-            data_hora_inicio=data_inicio,
-            data_hora_fim=data_fim,
-            status=StatusAgendamentoEnum.AGENDADO,
-            observacoes=f"Agendamento criado via chatbot. Tipo: {agendamento_data.get('tipo', 'N/A')}, Especialidade/Exame: {agendamento_data.get('especialidade', '')}{agendamento_data.get('nome_exame', '')}, Contato: {contato_data.get('telefone', 'N/A')}"
+        # Seleciona um médico baseado na especialidade
+        especialidade_solicitada = agendamento_data.get("especialidade", "")
+        selected_doctor_id = None
+        selected_doctor_name = "Aguardando confirmação"
+        
+        if especialidade_solicitada:
+            try:
+                # Busca médicos que atendem a especialidade solicitada
+                query = """
+                SELECT m.id_medico, m.nome 
+                FROM Medicos m
+                JOIN Medico_Especialidades me ON m.id_medico = me.id_medico
+                JOIN Especialidades e ON me.id_especialidade = e.id_especialidade
+                WHERE e.nome = ?
+                LIMIT 1
+                """
+                
+                async with db.execute(query, (especialidade_solicitada,)) as cursor:
+                    doctor_row = await cursor.fetchone()
+                    if doctor_row:
+                        selected_doctor_id = doctor_row[0]
+                        selected_doctor_name = doctor_row[1]
+                        logging.info(f"Médico selecionado: {selected_doctor_name} (ID: {selected_doctor_id}) para especialidade: {especialidade_solicitada}")
+                    else:
+                        logging.warning(f"Nenhum médico encontrado para a especialidade: {especialidade_solicitada}")
+                        
+            except Exception as e:
+                logging.error(f"Erro ao buscar médico por especialidade: {e}")
+
+        # Cria o agendamento diretamente no banco sem usar o schema problemático
+        cursor = await db.execute(
+            """
+            INSERT INTO Agendamentos (id_paciente, id_local, id_convenio, id_tipo_consulta, id_exame, id_medico, 
+                                      data_hora_inicio, data_hora_fim, status, observacoes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (patient_id, 1, None, 1 if agendamento_data.get("tipo") == "consulta" else None,
+             1 if agendamento_data.get("tipo") == "exame" else None, selected_doctor_id,
+             data_inicio, data_fim, StatusAgendamentoEnum.AGENDADO.value,
+             f"Agendamento criado via chatbot. Tipo: {agendamento_data.get('tipo', 'N/A')}, Especialidade/Exame: {agendamento_data.get('especialidade', '')}{agendamento_data.get('nome_exame', '')}, Contato: {contato_data.get('telefone', 'N/A')}")
         )
+        await db.commit()
+        appointment_id = cursor.lastrowid
 
-        new_appointment = await create_appointment(db, appointment_create)
+        logging.info(f"Agendamento criado com sucesso - ID: {appointment_id}")
 
-        logging.info(f"Agendamento criado com sucesso - ID: {new_appointment.id_agendamento}")
+        # Pega os dados que já foram coletados anteriormente no fluxo
+        data_agendamento = preferencias_data.get("data_preferencia")
+        horario_preferencia = preferencias_data.get("horario_preferencia")
+
+        # Monta a string de data e hora para exibição
+        data_hora_str = f"{data_agendamento} às {horario_preferencia}" if data_agendamento and horario_preferencia else "Não informado"
+
+        # Determina a especialidade ou exame
+        especialidade_valor = agendamento_data.get("especialidade") or agendamento_data.get("nome_exame") or "Não informado"
 
         return {
             "success": True,
             "message": "Agendamento criado com sucesso!",
             "appointment_data": {
-                "appointment_id": new_appointment.id_agendamento,
-                "patient_id": patient_id,
-                "patient_name": paciente_data["nome"],
-                "appointment_date": data_agendamento,
-                "appointment_time": horario_preferencia,
-                "type": agendamento_data.get("tipo"),
-                "specialty_or_exam": agendamento_data.get("especialidade", agendamento_data.get("nome_exame")),
-                "contact_phone": contato_data.get("telefone"),
-                "contact_email": contato_data.get("email")
+                "id_agendamento": appointment_id,
+                "nome_paciente": paciente_data.get("nome", "Não informado"),
+                "nome_medico": selected_doctor_name,  # Agora usa o médico selecionado
+                "especialidade": especialidade_valor,
+                "data_agendamento": data_hora_str,  # Enviando data e hora combinadas
+                "local": agendamento_data.get("local", "Não informado"),
+                "convenio": agendamento_data.get("convenio", "Particular"),
+                "observacoes": "Agendamento criado via chatbot"
             }
         }
 
