@@ -1,4 +1,4 @@
-// Configuratio
+// Configuration
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 // State management
@@ -74,7 +74,7 @@ async function sendMessage() {
     updateUI();
     
     try {
-        // Process message with AI
+        // Volta a enviar apenas a mensagem, sem estado acumulado
         const response = await fetch(`${API_BASE_URL}/ai-booking/process-message`, {
             method: 'POST',
             headers: {
@@ -131,36 +131,40 @@ async function createAppointment() {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                extracted_data: conversationState.extractedData
+                extracted_data: {
+                    ...conversationState.extractedData,
+                    dados_extraidos: ['paciente.nome', 'agendamento.tipo_agendamento', 'agendamento.especialidade'],
+                    dados_faltantes: []
+                }
             })
         });
         
         const data = await response.json();
         
         if (data.success) {
-            const appointment = data.data;
+            const appointment = data.appointment_data;
             const successMessage = `
 🎉 **Agendamento criado com sucesso!**
 
 📋 **Detalhes do Agendamento:**
-• **ID:** ${appointment.appointment_id}
-• **Paciente:** ${appointment.patient_name}
-• **Tipo:** ${appointment.type}
-• **Especialidade:** ${appointment.specialty_or_exam}
-• **Data:** ${appointment.appointment_date}
-• **Horário:** ${appointment.appointment_time}
-• **Telefone:** ${appointment.contact_phone}
-• **Email:** ${appointment.contact_email}
+• **ID:** ${appointment.id_agendamento}
+• **Paciente:** ${appointment.paciente_nome}
+• **Médico:** ${appointment.medico_nome}
+• **Especialidade:** ${appointment.especialidade_nome}
+• **Data/Hora:** ${formatDateTime(appointment.data_hora_inicio)}
+• **Local:** ${appointment.local_nome}
+• **Convênio:** ${appointment.convenio_nome || 'Particular'}
+• **Observações:** ${appointment.observacoes || 'Nenhuma'}
 
 ✅ Seu agendamento foi confirmado!
             `;
-            addMessage(markdownToHtml(successMessage), 'success');
+            addMessage(successMessage, 'success');
             
             // Reset state
             conversationState.canCreateAppointment = false;
             updateUI();
         } else {
-            addMessage('❌ Erro ao criar agendamento: ' + (data.detail || data.message || 'Erro desconhecido'), 'error');
+            addMessage('❌ Erro ao criar agendamento: ' + data.detail, 'error');
         }
     } catch (error) {
         console.error('Error:', error);
@@ -175,16 +179,22 @@ async function showPatientsModal() {
     
     try {
         const response = await fetch(`${API_BASE_URL}/patients/`);
+        if (!response.ok) {
+            // Se a resposta não for 2xx, mostre erro específico
+            const errorText = await response.text();
+            document.getElementById('patientsList').innerHTML = `<p>❌ Erro ao carregar pacientes: ${response.status} - ${errorText}</p>`;
+            return;
+        }
         const data = await response.json();
-        
-        if (data.success && data.data) {
-            displayPatients(data.data);
+        if ((data.success || Array.isArray(data)) && (data.data || Array.isArray(data))) {
+            // Suporta resposta como { success: true, data: [...] } ou apenas [...]
+            displayPatients(data.data || data);
         } else {
             document.getElementById('patientsList').innerHTML = '<p>❌ Erro ao carregar pacientes</p>';
         }
     } catch (error) {
         console.error('Error:', error);
-        document.getElementById('patientsList').innerHTML = '<p>❌ Erro de conexão</p>';
+        document.getElementById('patientsList').innerHTML = `<p>❌ Erro de conexão: ${error.message}</p>`;
     }
 }
 
@@ -343,12 +353,4 @@ function formatDateTime(dateTimeString) {
     if (!dateTimeString) return 'Não informado';
     const date = new Date(dateTimeString);
     return date.toLocaleString('pt-BR');
-}
-
-function markdownToHtml(text) {
-    // Negrito: *texto*
-    let html = text.replace(/\\(.?)\\*/g, '<b>$1</b>');
-    // Quebra de linha: \n
-    html = html.replace(/\n/g, '<br>');
-    return html;
 }

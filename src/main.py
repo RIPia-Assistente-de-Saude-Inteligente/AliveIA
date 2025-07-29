@@ -10,11 +10,11 @@ import os
 from pathlib import Path
 
 # Import configuration and database
-from src.config.settings import settings
-from src.database.connection import db_manager
+from config.settings import settings
+from database.connection import db_manager
 
 # Import routers
-from src.routes import patients, booking, ai_booking
+from routes import patients, booking, ai_booking
 
 app = FastAPI(
     title="Sistema de Agendamento Médico",

@@ -4,7 +4,7 @@ Database connection and initialization for SQLite.
 import aiosqlite
 import sqlite3
 from pathlib import Path
-from src.config.settings import DATABASE_PATH, DATABASE_SCHEMA_PATH
+from config.settings import DATABASE_PATH, DATABASE_SCHEMA_PATH
 import asyncio
 from typing import AsyncGenerator
 

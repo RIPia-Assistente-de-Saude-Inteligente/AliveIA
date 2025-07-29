@@ -5,13 +5,13 @@ from fastapi import APIRouter, Depends, status
 from typing import List
 import aiosqlite
 
-from src.database.connection import get_db
-from src.database.models.schemas import (
+from database.connection import get_db
+from database.models.schemas import (
     AgendamentoCreate, AgendamentoResponse,
     MedicoResponse, EspecialidadeResponse, LocalAtendimentoResponse,
     TipoConsultaResponse, ExameResponse
 )
-from src.services import booking_service
+from services import booking_service
 
 router = APIRouter()
 

@@ -2,12 +2,8 @@
 Service layer for the booking process.
 """
 import aiosqlite
-import logging
-from typing import List, Optional, Dict, Any
-from datetime import datetime, date
-
-from src.database.models.schemas import AgendamentoCreate, AgendamentoResponse, MedicoResponse, EspecialidadeResponse, LocalAtendimentoResponse, TipoConsultaResponse, ExameResponse
-from src.database.connection import get_db
+from typing import List
+from database.models.schemas import AgendamentoCreate, AgendamentoResponse, MedicoResponse, EspecialidadeResponse, LocalAtendimentoResponse, TipoConsultaResponse, ExameResponse
 
 # Since these are fixed, we can query them once and potentially cache them.
 

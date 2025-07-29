@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 import aiosqlite
 
-from src.database.connection import get_db
-from src.database.models.schemas import PacienteCreate, PacienteUpdate, PacienteResponse, PacientesListResponse
-from src.services import patient_service
+from database.connection import get_db
+from database.models.schemas import PacienteCreate, PacienteUpdate, PacienteResponse, PacientesListResponse
+from services import patient_service
 
 router = APIRouter()
 
