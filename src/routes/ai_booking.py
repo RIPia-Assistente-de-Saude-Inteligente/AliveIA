@@ -28,7 +28,8 @@ router = APIRouter()
 @router.post("/process-message")
 async def process_booking_message(
         message_data: Dict[str, str],
-        user_id: str = "session_123"
+        user_id: str = "session_123",
+        db: aiosqlite.Connection = Depends(get_db)
 ):
     """
     Processa a mensagem do usuário e retorna o estado completo da conversa.
@@ -47,6 +48,82 @@ async def process_booking_message(
         logging.info(f"PACOTE DE DADOS A SER ENVIADO: {conversation_update}")
         # -----------------------------
 
+        # Se o usuário chegou ao estado END após confirmar, cria automaticamente o agendamento
+        if conversation_update.get("current_state") == "END":
+            try:
+                # Cria o agendamento automaticamente
+                appointment_result = await create_appointment_from_ai({
+                    "extracted_data": conversation_update.get("conversation_data")
+                }, db)
+                
+                # Atualiza a mensagem para incluir os detalhes do agendamento
+                success_message = f"""✅ {conversation_update.get("next_question")}
+
+🎉 **Agendamento criado com sucesso!**
+
+📋 **Detalhes do Agendamento:**
+• **ID:** {appointment_result['data']['appointment_id']}
+• **Paciente:** {appointment_result['data']['patient_name']}
+• **Data/Hora:** {appointment_result['data']['appointment_date']} às {appointment_result['data']['appointment_time']}
+• **Tipo:** {appointment_result['data']['type']}
+• **Especialidade:** {appointment_result['data']['specialty_or_exam']}
+• **Contato:** {appointment_result['data']['contact_phone']}"""
+
+                response = {
+                    "success": True,
+                    "next_question": success_message,
+                    "conversation_data": conversation_update.get("conversation_data"),
+                    "current_state": conversation_update.get("current_state"),
+                    "extracted_data": conversation_update.get("conversation_data"),
+                    "status": "appointment_created",
+                    "can_proceed": False,
+                    "validation": {"is_valid": True},
+                    "appointment_data": appointment_result['data']
+                }
+                
+                return response
+                
+            except Exception as e:
+                logging.error(f"Erro ao criar agendamento automaticamente: {e}")
+                response = {
+                    "success": True,
+                    "next_question": f"❌ Erro ao criar agendamento. {str(e)}",
+                    "conversation_data": conversation_update.get("conversation_data"),
+                    "current_state": "ERROR",
+                    "extracted_data": conversation_update.get("conversation_data"),
+                    "status": "error",
+                    "can_proceed": False,
+                    "validation": {"is_valid": False}
+                }
+                return response
+
+        # Calcula progresso baseado nos dados coletados
+        conversation_data = conversation_update.get("conversation_data", {})
+        total_fields = 11  # Total de campos necessários
+        collected_fields = 0
+        
+        # Conta campos do paciente
+        paciente = conversation_data.get("paciente", {})
+        collected_fields += sum(1 for v in [paciente.get("nome"), paciente.get("cpf"), 
+                                          paciente.get("data_nascimento"), paciente.get("sexo")] if v)
+        
+        # Conta campos do agendamento
+        agendamento = conversation_data.get("agendamento_info", {})
+        collected_fields += sum(1 for v in [agendamento.get("tipo"), 
+                                          agendamento.get("especialidade") or agendamento.get("nome_exame"),
+                                          agendamento.get("local"), agendamento.get("convenio")] if v)
+        
+        # Conta campos de contato
+        contato = conversation_data.get("contato", {})
+        collected_fields += sum(1 for v in [contato.get("telefone"), contato.get("email")] if v)
+        
+        # Conta campos de preferências
+        preferencias = conversation_data.get("preferencias", {})
+        collected_fields += sum(1 for v in [preferencias.get("data_preferencia"), 
+                                          preferencias.get("horario_preferencia")] if v)
+        
+        completion_percentage = (collected_fields / total_fields) * 100
+
         response = {
             "success": True,
             "next_question": conversation_update.get("next_question"),
@@ -57,7 +134,12 @@ async def process_booking_message(
             "status": "ready_to_book" if conversation_update.get(
                 "current_state") == "CONFIRMATION" else "need_more_info",
             "can_proceed": conversation_update.get("current_state") == "CONFIRMATION",
-            "validation": {"is_valid": True}  # Simplificado
+            "validation": {
+                "is_valid": True,
+                "completion_percentage": completion_percentage,
+                "collected_fields": collected_fields,
+                "total_fields": total_fields
+            }
         }
 
         return response

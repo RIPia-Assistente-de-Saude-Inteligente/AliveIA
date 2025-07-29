@@ -84,16 +84,42 @@ class FlowManager:
             'current_state': initial_state_key,
             'data': {}
         }
-        message = self.flow['states'][initial_state_key]['message']
+        
+        # Para o estado inicial, apenas retorna a mensagem sem modificações
+        initial_state_info = self.flow['states'][initial_state_key]
+        message = initial_state_info['message']
+        
         return self._get_current_state_response(user_id, message)
 
     def _handle_user_question(self, user_id: str, current_state_info: dict) -> dict:
         """Gera uma resposta quando o usuário faz uma pergunta sobre as opções."""
-        target_field = current_state_info.get("extract", "") # CORREÇÃO: Garante que target_field seja sempre uma string
+        target_field = current_state_info.get("extract", "")
+        current_state = self.user_conversations[user_id]['current_state']
 
         if "especialidade" in target_field:
-            specialties = ", ".join(db.get_specialties())
-            message = f"As especialidades disponíveis são: {specialties}. Qual delas você gostaria?"
+            try:
+                specialties = db.get_specialties()
+                specialty_list = ", ".join(specialties)
+                message = f"As especialidades disponíveis são: {specialty_list}. Qual delas você gostaria?"
+            except Exception as e:
+                logging.error(f"Erro ao buscar especialidades: {e}")
+                message = "Houve um erro ao buscar as especialidades. Por favor, me informe qual especialidade você precisa."
+        elif "local" in target_field:
+            # Para o estado de local, mostra apenas locais que atendem a especialidade já escolhida
+            try:
+                selected_specialty = self.user_conversations[user_id]['data'].get('agendamento_info', {}).get('especialidade')
+                if selected_specialty:
+                    locations = db.get_locations_by_specialty(selected_specialty)
+                    if locations:
+                        location_list = ", ".join([loc['nome'] for loc in locations])
+                        message = f"Os locais disponíveis para {selected_specialty} são: {location_list}. Qual você escolhe?"
+                    else:
+                        message = f"Não encontrei locais disponíveis para {selected_specialty}. Por favor, me informe um local de sua preferência."
+                else:
+                    message = "Primeiro preciso saber a especialidade para mostrar os locais disponíveis."
+            except Exception as e:
+                logging.error(f"Erro ao buscar locais: {e}")
+                message = "Houve um erro ao buscar os locais. Por favor, me informe qual local você prefere."
         else:
             message = "Não tenho uma lista de opções para esta pergunta. Por favor, me informe o que você precisa."
         
@@ -102,21 +128,6 @@ class FlowManager:
     def process_user_response(self, user_id: str, user_message: str) -> dict:
         """Processa a resposta e retorna um dicionário completo com o novo estado."""
         if user_id not in self.user_conversations:
-            initial_state_key = self.flow['initial_state']
-            initial_state_info = self.flow['states'][initial_state_key]
-
-            for keyword, next_state_key in initial_state_info['transitions'].items():
-                if keyword in user_message.lower():
-                    self.user_conversations[user_id] = {
-                        'current_state': next_state_key,
-                        'data': {}
-                    }
-                    # CORREÇÃO: Usa a função _save_data para garantir a consistência da estrutura
-                    self._save_data(user_id, initial_state_info.get('extract'), keyword)
-                    
-                    next_state_info = self.flow['states'][next_state_key]
-                    return self._get_current_state_response(user_id, next_state_info['message'])
-            
             return self.get_initial_message(user_id)
 
         conversation = self.user_conversations[user_id]
@@ -158,7 +169,24 @@ class FlowManager:
         # --- FIM DA IMPLEMENTAÇÃO OBRIGATÓRIA ---
 
         target_field_key = current_state_info.get("extract", "none").split('.')[-1]
-        valid_options = db.get_specialties() if target_field_key == "especialidade" else None
+        
+        # Define opções válidas baseadas no estado atual
+        valid_options = None
+        if target_field_key == "especialidade":
+            try:
+                valid_options = db.get_specialties()
+            except Exception as e:
+                logging.error(f"Erro ao buscar especialidades: {e}")
+                valid_options = []
+        elif target_field_key == "local":
+            try:
+                selected_specialty = conversation['data'].get('agendamento_info', {}).get('especialidade')
+                if selected_specialty:
+                    locations = db.get_locations_by_specialty(selected_specialty)
+                    valid_options = [loc['nome'] for loc in locations] if locations else []
+            except Exception as e:
+                logging.error(f"Erro ao buscar locais: {e}")
+                valid_options = []
 
         analysis = self.data_extractor.analyze_user_response(
             chatbot_question=current_state_info['message'],
@@ -182,7 +210,7 @@ class FlowManager:
 
         # Lógica de transição - PONTO MAIS CRÍTICO
         next_state = current_state_info.get('next_state')
-        logging.info(f"Próximo estado definido no JSON: '{next_state}'")  # VERIFIQUE SE APARECE O NOME CORRETO AQUI
+        logging.info(f"Próximo estado definido no JSON: '{next_state}'")
         
         if 'transitions' in current_state_info:
             logging.info(f"Transitions encontradas: {current_state_info['transitions']}")
@@ -198,7 +226,30 @@ class FlowManager:
             next_state_info = self.flow['states'][next_state]
             
             message = next_state_info['message']
-            if next_state == 'CONFIRMATION':
+            
+            # Personaliza mensagens baseadas no estado
+            if next_state == 'GET_SPECIALTY':
+                # Adiciona lista de especialidades disponíveis
+                try:
+                    specialties = db.get_specialties()
+                    if specialties:
+                        specialty_list = ", ".join(specialties)
+                        message += f"\n\nEspecialidades disponíveis: {specialty_list}"
+                except Exception as e:
+                    logging.error(f"Erro ao buscar especialidades: {e}")
+            elif next_state == 'GET_LOCATION':
+                # Adiciona lista de locais filtrados por especialidade
+                try:
+                    selected_specialty = conversation['data'].get('agendamento_info', {}).get('especialidade')
+                    if selected_specialty:
+                        locations = db.get_locations_by_specialty(selected_specialty)
+                        if locations:
+                            location_names = [loc['nome'] for loc in locations]
+                            location_list = ", ".join(location_names)
+                            message += f"\n\nLocais disponíveis para {selected_specialty}: {location_list}"
+                except Exception as e:
+                    logging.error(f"Erro ao buscar locais para especialidade: {e}")
+            elif next_state == 'CONFIRMATION':
                 message = self._format_confirmation_message(user_id, message)
             elif next_state == 'END':
                 message = self._format_end_message(user_id, message)
@@ -224,8 +275,15 @@ class FlowManager:
         preferencias = data.get('preferencias', {})
         
         # Determina se é especialidade ou exame
-        especialidade_ou_exame = "Especialidade" if agendamento.get('especialidade') else "Exame"
-        especialidade_valor = agendamento.get('especialidade', '') or agendamento.get('nome_exame', '')
+        tipo = agendamento.get('tipo', 'Não informado')
+        if tipo.lower() == 'consulta':
+            especialidade_ou_exame = "Especialidade"
+            especialidade_valor = agendamento.get('especialidade', 'Não informado')
+            nome_exame_valor = ''
+        else:
+            especialidade_ou_exame = "Exame"
+            especialidade_valor = ''
+            nome_exame_valor = agendamento.get('nome_exame', 'Não informado')
         
         # Valores de formatação - usando underscore em vez de pontos
         format_values = {
@@ -235,10 +293,11 @@ class FlowManager:
             'paciente_sexo': paciente.get('sexo', 'Não informado'),
             'contato_telefone': contato.get('telefone', 'Não informado'),
             'contato_email': contato.get('email', 'Não informado'),
-            'agendamento_info_tipo': agendamento.get('tipo', 'Não informado'),
+            'agendamento_info_tipo': tipo,
             'especialidade_ou_exame': especialidade_ou_exame,
             'agendamento_info_especialidade': especialidade_valor,
-            'agendamento_info_nome_exame': '',  # Usado apenas quando é exame
+            'agendamento_info_nome_exame': nome_exame_valor,
+            'agendamento_info_local': agendamento.get('local', 'Não informado'),
             'preferencias_data_preferencia': preferencias.get('data_preferencia', 'Não informado'),
             'preferencias_horario_preferencia': preferencias.get('horario_preferencia', 'Não informado'),
             'agendamento_info_convenio': agendamento.get('convenio', 'Não informado')

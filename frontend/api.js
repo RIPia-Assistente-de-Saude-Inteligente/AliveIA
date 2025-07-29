@@ -44,6 +44,14 @@ export async function createAppointmentFromAI() {
     }
     showLoading(true);
     try {
+        console.log('🔍 Enviando dados para o backend:', {
+            extracted_data: {
+                ...conversationState.extractedData,
+                dados_extraidos: ['paciente.nome', 'agendamento.tipo_agendamento', 'agendamento.especialidade'],
+                dados_faltantes: []
+            }
+        });
+
         const response = await fetch(`${API_BASE_URL}/ai-booking/create-from-ai`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -55,18 +63,43 @@ export async function createAppointmentFromAI() {
                 }
             })
         });
+
+        console.log('🔍 Response status:', response.status);
+        console.log('🔍 Response ok:', response.ok);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('🔍 Response error text:', errorText);
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
+        const contentType = response.headers.get('content-type');
+        console.log('🔍 Response content-type:', contentType);
+        
+        if (!contentType || !contentType.includes('application/json')) {
+            const responseText = await response.text();
+            console.error('🔍 Response não é JSON:', responseText);
+            throw new Error('Resposta do servidor não é JSON válido');
+        }
+
         const data = await response.json();
+        console.log('🔍 Response data:', data);
+
         if (data.success) {
-            const appointment = data.appointment_data;
-            const successMessage = `\n🎉 **Agendamento criado com sucesso!**\n\n📋 **Detalhes do Agendamento:**\n• **ID:** ${appointment.id_agendamento}\n• **Paciente:** ${appointment.paciente_nome}\n• **Médico:** ${appointment.medico_nome}\n• **Especialidade:** ${appointment.especialidade_nome}\n• **Data/Hora:** ${formatDateTime(appointment.data_hora_inicio)}\n• **Local:** ${appointment.local_nome}\n• **Convênio:** ${appointment.convenio_nome || 'Particular'}\n• **Observações:** ${appointment.observacoes || 'Nenhuma'}\n\n✅ Seu agendamento foi confirmado!\n            `;
+            const appointment = data.data;
+            console.log('🔍 Appointment data:', appointment);
+            const successMessage = `\n🎉 **Agendamento criado com sucesso!**\n\n📋 **Detalhes do Agendamento:**\n• **ID:** ${appointment.appointment_id}\n• **Paciente:** ${appointment.patient_name}\n• **Tipo:** ${appointment.type}\n• **Especialidade/Exame:** ${appointment.specialty_or_exam}\n• **Data:** ${appointment.appointment_date}\n• **Horário:** ${appointment.appointment_time}\n• **Telefone:** ${appointment.contact_phone}\n• **Email:** ${appointment.contact_email || 'Não informado'}\n\n✅ Seu agendamento foi confirmado!\n            `;
             addMessage(markdownToHtml(successMessage), 'success');
             conversationState.canCreateAppointment = false;
             updateUI();
         } else {
-            addMessage('❌ Erro ao criar agendamento: ' + data.detail, 'error');
+            console.error('🔍 Backend retornou success=false:', data);
+            addMessage('❌ Erro ao criar agendamento: ' + (data.detail || data.message || 'Erro desconhecido'), 'error');
         }
     } catch (error) {
-        addMessage('❌ Erro ao criar agendamento. Tente novamente.', 'error');
+        console.error('🔍 Erro no catch:', error);
+        console.error('🔍 Erro stack trace:', error.stack);
+        addMessage('❌ Erro ao criar agendamento. Tente novamente. Detalhes: ' + error.message, 'error');
     } finally {
         showLoading(false);
     }

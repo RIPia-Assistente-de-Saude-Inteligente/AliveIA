@@ -68,10 +68,17 @@ export function displayExtractedData(data) {
     }
     if (data.agendamento_info && Object.values(data.agendamento_info).some(v => v !== null)) {
         html += '<div class="data-section"><strong>🏥 Agendamento:</strong><br>';
-        if (data.agendamento_info.tipo_agendamento) html += `<span class="data-label">Tipo:</span> ${data.agendamento_info.tipo_agendamento}<br>`;
+        if (data.agendamento_info.tipo) html += `<span class="data-label">Tipo:</span> ${data.agendamento_info.tipo}<br>`;
         if (data.agendamento_info.especialidade) html += `<span class="data-label">Especialidade:</span> ${data.agendamento_info.especialidade}<br>`;
-        if (data.agendamento_info.tem_convenio !== null) html += `<span class="data-label">Convênio:</span> ${data.agendamento_info.tem_convenio ? 'Sim' : 'Não'}<br>`;
-        if (data.agendamento_info.nome_convenio) html += `<span class="data-label">Nome do Convênio:</span> ${data.agendamento_info.nome_convenio}<br>`;
+        if (data.agendamento_info.nome_exame) html += `<span class="data-label">Exame:</span> ${data.agendamento_info.nome_exame}<br>`;
+        if (data.agendamento_info.local) html += `<span class="data-label">Local:</span> ${data.agendamento_info.local}<br>`;
+        if (data.agendamento_info.convenio) html += `<span class="data-label">Convênio:</span> ${data.agendamento_info.convenio}<br>`;
+        html += '</div><br>';
+    }
+    if (data.contato && Object.values(data.contato).some(v => v !== null)) {
+        html += '<div class="data-section"><strong>📞 Contato:</strong><br>';
+        if (data.contato.telefone) html += `<span class="data-label">Telefone:</span> ${data.contato.telefone}<br>`;
+        if (data.contato.email) html += `<span class="data-label">Email:</span> ${data.contato.email}<br>`;
         html += '</div><br>';
     }
     if (data.preferencias && Object.values(data.preferencias).some(v => v !== null)) {
@@ -112,6 +119,7 @@ export function handleAIResponse(data) {
     conversationState.extractedData = data.extracted_data;
     conversationState.validationStatus = data.validation;
     conversationState.canCreateAppointment = data.can_proceed;
+    
     if (data.status === 'need_more_info') {
         // Formatar mensagem com quebras de linha e detalhes em negrito
         let formatted = data.next_question
@@ -119,7 +127,29 @@ export function handleAIResponse(data) {
             .replace(/(nome|cpf|data de nascimento|sexo|tipo de agendamento|especialidade|convênio|data|horário|observações)/gi, match => `<strong>${match}</strong>`);
         addMessage('🤖 ' + formatted, 'bot');
     } else if (data.status === 'ready_to_book') {
-        addMessage('✅ ' + data.message + '\n\n📋 Dados coletados com sucesso! Você pode revisar as informações no painel lateral e criar o agendamento.', 'success');
+        // Se estamos no estado de confirmação, mostra a mensagem mas NÃO cria automaticamente
+        if (data.current_state === 'CONFIRMATION') {
+            let formatted = data.next_question
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            addMessage('🤖 ' + formatted, 'bot');
+        } else {
+            // Só mostra a mensagem de sucesso após confirmação do usuário
+            addMessage('✅ ' + data.next_question + '\n\n📋 Dados coletados com sucesso! Você pode revisar as informações no painel lateral e criar o agendamento.', 'success');
+        }
+    } else if (data.status === 'appointment_created') {
+        // Agendamento foi criado com sucesso
+        let formatted = data.next_question
+            .replace(/\n/g, '<br>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        addMessage(formatted, 'success');
+        
+        // Resetar o estado para permitir novo agendamento
+        conversationState.canCreateAppointment = false;
+        conversationState.extractedData = null;
+    } else if (data.status === 'error') {
+        // Erro ao criar agendamento
+        addMessage(data.next_question, 'error');
     }
     updateUI();
 }
