@@ -25,6 +25,86 @@ class ConsultationDataExtractor:
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
         
+        # Configurações de cache e métricas
+        self._cache = {}
+        self._cache_hits = 0
+        self._api_calls = 0
+    
+    def _generate_cache_key(self, user_message: str, target_field: str, valid_options: Optional[List[str]] = None) -> str:
+        """
+        Gera uma chave de cache única baseada na mensagem, campo e opções válidas.
+        
+        Args:
+            user_message: Mensagem do usuário
+            target_field: Campo sendo analisado
+            valid_options: Opções válidas (se houver)
+            
+        Returns:
+            String com chave única para cache
+        """
+        # Normaliza a mensagem para cache (lowercase, strip)
+        normalized_message = user_message.lower().strip()
+        
+        # Cria chave base
+        cache_parts = [normalized_message, target_field]
+        
+        # Adiciona opções válidas se existirem
+        if valid_options:
+            cache_parts.append("|".join(sorted(valid_options)))
+        
+        # Junta tudo em uma chave única
+        cache_key = f"extract::{':'.join(cache_parts)}"
+        
+        return cache_key
+    
+    def _try_local_processing(self, user_message: str, target_field: str, valid_options: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Tenta processar a mensagem localmente sem usar IA para casos simples.
+        
+        Args:
+            user_message: Mensagem do usuário
+            target_field: Campo sendo analisado  
+            valid_options: Opções válidas (se houver)
+            
+        Returns:
+            Resultado se processamento local foi possível, None caso contrário
+        """
+        message_lower = user_message.lower().strip()
+        
+        # Para opções válidas, tenta match exato ou parcial
+        if valid_options:
+            for option in valid_options:
+                if option.lower() in message_lower:
+                    return {
+                        "intent": "PROVIDE_INFO",
+                        "is_valid": True,
+                        "extracted_value": option,
+                        "error_message": None
+                    }
+        
+        # Respostas simples de confirmação/negação
+        confirmacao_sim = ["sim", "yes", "ok", "pode ser", "tudo bem", "concordo", "aceito"]
+        confirmacao_nao = ["não", "nao", "no", "negativo", "discordo", "recuso"]
+        
+        if any(palavra in message_lower for palavra in confirmacao_sim):
+            return {
+                "intent": "PROVIDE_INFO", 
+                "is_valid": True,
+                "extracted_value": "sim",
+                "error_message": None
+            }
+        
+        if any(palavra in message_lower for palavra in confirmacao_nao):
+            return {
+                "intent": "PROVIDE_INFO",
+                "is_valid": True, 
+                "extracted_value": "não",
+                "error_message": None
+            }
+        
+        # Se não conseguiu processar localmente
+        return None
+        
         # Template para extração de dados
         self.extraction_prompt = """
         Você é um assistente médico especializado em extrair informações para agendamento de consultas.
