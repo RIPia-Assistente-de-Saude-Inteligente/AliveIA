@@ -144,7 +144,34 @@ function handleAIResponse(data) {
     if (data.status === 'need_more_info') {
         addMessage('🤖 ' + data.next_question, 'bot');
     } else if (data.status === 'ready_to_book') {
-        addMessage('✅ ' + data.message + '\n\nAgendamento criado com sucesso!', 'success');
+        addMessage('✅ ' + '\n\n Informações coletadas, pronto para agendar!', 'success');
+    } else if (data.status === 'appointment_created') {
+        // Agendamento foi criado automaticamente
+        const appointment = data.appointment_data;
+        if (appointment) {
+            const successMessage = `
+🎉 **Agendamento criado com sucesso!**
+
+📋 **Detalhes do Agendamento:**
+• **ID:** ${appointment.id_agendamento}\n
+• **Paciente:** ${appointment.nome_paciente}\n
+• **Médico:** ${appointment.nome_medico}\n
+• **Especialidade:** ${appointment.especialidade}\n
+• **Data/Hora:** ${appointment.data_agendamento}\n
+• **Local:** ${appointment.local}\n
+• **Convênio:** ${appointment.convenio || 'Particular'}\n
+• **Observações:** ${appointment.observacoes || 'Nenhuma'}\n
+
+✅ Seu agendamento foi confirmado!
+            `;
+            addMessage(successMessage, 'success');
+        } else {
+            addMessage('🤖 ' + data.next_question, 'bot');
+        }
+        
+        // Reset state
+        conversationState.canCreateAppointment = false;
+        conversationState.extractedData = null;
     }
     
     updateUI();
@@ -182,12 +209,12 @@ async function createAppointment() {
 
 📋 **Detalhes do Agendamento:**
 • **ID:** ${appointment.id_agendamento}
-• **Paciente:** ${appointment.paciente_nome}
-• **Médico:** ${appointment.medico_nome}
-• **Especialidade:** ${appointment.especialidade_nome}
-• **Data/Hora:** ${formatDateTime(appointment.data_hora_inicio)}
-• **Local:** ${appointment.local_nome}
-• **Convênio:** ${appointment.convenio_nome || 'Particular'}
+• **Paciente:** ${appointment.nome_paciente}
+• **Médico:** ${appointment.nome_medico}
+• **Especialidade:** ${appointment.especialidade}
+• **Data/Hora:** ${appointment.data_agendamento}
+• **Local:** ${appointment.local}
+• **Convênio:** ${appointment.convenio || 'Particular'}
 • **Observações:** ${appointment.observacoes || 'Nenhuma'}
 
 ✅ Seu agendamento foi confirmado!
