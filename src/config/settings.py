@@ -11,11 +11,9 @@ class Settings(BaseSettings):
     # Database settings
     database_url: str = "sqlite:///./medical_system.db"
 
-    gemini_api_key: str
-    gemini_model: str
-
-    class Config:
-        env_file = ".env"
+    # Google Gemini settings
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-1.5-flash"
     
     # FastAPI settings
     app_name: str = "Sistema de Agendamento Médico"
@@ -30,14 +28,13 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     
     # CORS settings
-    allowed_origins: list = ["http://localhost:3000", "http://localhost:8080"]
-    
-    # Google Gemini settings (if needed)
-    google_api_key: str = ""
+    allowed_origins: list = ["http://localhost:3000", "http://localhost:8080", "http://localhost:8000"]
     
     class Config:
-        env_file = ".env"
+        # Caminho absoluto para o .env na raiz do projeto
+        env_file = Path(__file__).parent.parent.parent / ".env"
         case_sensitive = False
+        extra = "ignore"  # Permite campos extras no .env sem erro
 
 # Create settings instance
 settings = Settings()
