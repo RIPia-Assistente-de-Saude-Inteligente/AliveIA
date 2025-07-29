@@ -100,6 +100,40 @@ async function sendMessage() {
     }
 }
 
+document.getElementById("uploadPdf").addEventListener("change", async function (event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Mostra overlay de carregamento
+    document.getElementById("loadingOverlay").style.display = "flex";
+
+    const formData = new FormData();
+    formData.append("pdf_file", file);
+
+    try {
+        const response = await fetch("/api/v1/ai-booking/process-pdf", {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            alert("PDF processado com sucesso. Dados extraídos!");
+            // Simula envio da mensagem ao chatbot
+            document.getElementById("messageInput").value = result.extracted_text;
+            document.getElementById("sendButton").click();
+        } else {
+            alert("Falha ao processar o PDF.");
+        }
+    } catch (err) {
+        console.error("Erro ao enviar PDF:", err);
+        alert("Erro ao processar o PDF.");
+    } finally {
+        document.getElementById("loadingOverlay").style.display = "none";
+    }
+});
+
+
 function handleAIResponse(data) {
     // Update conversation state
     conversationState.extractedData = data.extracted_data;

@@ -1,323 +1,295 @@
-"""
-API routes for AI-powered booking using Gemini integration.
-"""
-from fastapi import APIRouter, Depends, status, HTTPException
-from typing import Dict, Any
+# src/routes/ai_booking.py
+import json
+
+from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File
+from typing import Dict
+import os
+from dotenv import load_dotenv
+import google.generativeai as genai
+from src.chatbot.flows.flow_manager import FlowManager
+import logging
+from datetime import datetime, time
+from src.database.connection import get_db
+from src.database.models.schemas import PacienteCreate, AgendamentoCreate, SexoEnum, StatusAgendamentoEnum
+from src.services.patient_service import get_patient_by_cpf, create_patient
+from src.services.booking_service import create_appointment
 import aiosqlite
-from datetime import datetime, timedelta
 
-from database.connection import get_db
-from database.models.schemas import PacienteCreate, AgendamentoCreate, StatusAgendamentoEnum
-from services import patient_service, booking_service
+# Carregue as variáveis do arquivo .env
+load_dotenv()
 
-# Import Data Extractor
-from chatbot.core.data_extractor import ConsultationDataExtractor
+# Configuração do modelo e do FlowManager
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+ai_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+flow_manager = FlowManager(model=ai_model)
 
 router = APIRouter()
+@router.post("/process-pdf")
+async def process_pdf_file(pdf_file: UploadFile = File(...), db: aiosqlite.Connection = Depends(get_db)):
+    try:
+        content = await pdf_file.read()
 
-# Initialize Data Extractor
-extractor = ConsultationDataExtractor()
+        from PyPDF2 import PdfReader
+        from io import BytesIO
+
+        reader = PdfReader(BytesIO(content))
+        full_text = "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
+
+        if not full_text.strip():
+            raise HTTPException(status_code=400, detail="Não foi possível extrair texto do PDF.")
+
+        # Prompt estruturado para resposta em JSON
+        prompt = f"""
+Você receberá o conteúdo extraído de um PDF. Extraia todos os dados relevantes para agendamento de consulta médica. 
+Se algum dado não estiver presente, coloque o valor como null. 
+Responda SOMENTE com um JSON no seguinte formato:
+Se um campo não estiver presente no texto, **tente inferir** ou preencha com null (sem aspas).
+Nunca retorne campos vazios ("").
+
+
+{{
+  "paciente": {{
+    "nome": "...",
+    "cpf": "...",
+    "data_nascimento": "YYYY-MM-DD",
+    "sexo": "M", "F" ou "O"
+  }},
+  "contato": {{
+    "telefone": "...",
+    "email": "..."
+  }},
+  "agendamento_info": {{
+    "tipo": "consulta" ou "exame",
+    "especialidade": "...",
+    "nome_exame": "..."
+  }},
+  "preferencias": {{
+    "data_preferencia": "YYYY-MM-DD",
+    "horario_preferencia": "HH:MM" ou "manhã" ou "tarde" ou "noite"
+  }}
+}}
+
+Conteúdo do PDF:
+{full_text}
+"""
+
+        logging.info("🔎 Enviando texto para o Gemini...")
+        result = ai_model.generate_content(prompt, generation_config={"temperature": 0.3})
+        extracted_json = result.text.strip()
+
+        logging.info(f"📥 Resposta bruta do Gemini: {extracted_json[:300]}...")
+
+        # Limpeza para garantir que seja JSON válido
+        extracted_clean = extracted_json.replace("```json", "").replace("```", "").strip()
+        conversation_data = json.loads(extracted_clean)
+
+        # Validação básica do JSON
+        if "paciente" not in conversation_data or not conversation_data["paciente"].get("cpf"):
+            raise HTTPException(status_code=400, detail="Os dados extraídos estão incompletos ou inválidos.")
+
+        # Opcional: já cria o agendamento automaticamente (remova se quiser controle manual)
+        agendamento_result = await create_appointment_from_ai({"extracted_data": conversation_data}, db)
+
+        return {
+            "success": True,
+            "message": "PDF processado com sucesso",
+            "extracted_data": conversation_data,
+            "agendamento": agendamento_result
+        }
+
+    except json.JSONDecodeError as e:
+        logging.error(f"❌ Erro ao decodificar JSON: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao interpretar a resposta da IA.")
+    except Exception as e:
+        logging.error(f"❌ Erro ao processar PDF: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erro ao processar PDF.")
+
 
 @router.post("/process-message")
 async def process_booking_message(
     message_data: Dict[str, str],
-    db: aiosqlite.Connection = Depends(get_db)
+    user_id: str = "session_123"
 ):
     """
-    Process natural language message for booking using Gemini AI.
-    
-    Args:
-        message_data: {"message": "user message text"}
-        db: Database connection
-        
-    Returns:
-        Processed data and next steps
+    Processa a mensagem do usuário e retorna o estado completo da conversa.
     """
     try:
         message = message_data.get("message", "").strip()
+        logging.info(f"Recebida requisição para user_id='{user_id}' com a mensagem: '{message}'")
         
         if not message:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Message is required"
-            )
+            logging.warning("Mensagem recebida está vazia.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A mensagem é obrigatória")
+
+        conversation_update = flow_manager.process_user_response(user_id, message)
         
-        # Extract data using Gemini
-        extracted_data = extractor.extract_consultation_data(message)
-        print(extracted_data)
-        # Validate essential data
-        validation = extractor.validate_essential_data(extracted_data)
-        
+        # --- PONTO DE LOG CRÍTICO ---
+        logging.info(f"PACOTE DE DADOS A SER ENVIADO: {conversation_update}")
+        # -----------------------------
+
         response = {
             "success": True,
-            "extracted_data": extracted_data,
-            "validation": validation,
-            "can_proceed": validation["is_valid"]
+            "next_question": conversation_update.get("next_question"),
+            "conversation_data": conversation_update.get("conversation_data"),
+            "current_state": conversation_update.get("current_state"),
+            # Campos que o frontend espera:
+            "extracted_data": conversation_update.get("conversation_data"),
+            "status": "ready_to_book" if conversation_update.get("current_state") == "CONFIRMATION" else "need_more_info",
+            "can_proceed": conversation_update.get("current_state") == "CONFIRMATION",
+            "validation": {"is_valid": True}  # Simplificado
         }
-        
-        # If data is insufficient, generate next question
-        if not validation["is_valid"]:
-            next_question = extractor.generate_missing_data_questions(extracted_data)
-            response["next_question"] = next_question
-            response["status"] = "need_more_info"
-        else:
-            response["status"] = "ready_to_book"
-            response["message"] = "Dados suficientes para agendamento!"
         
         return response
         
     except Exception as e:
+        logging.error(f"ERRO CRÍTICO NA ROTA DA API: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing message: {str(e)}"
+            detail=f"Erro ao processar a mensagem: {str(e)}"
         )
 
-@router.post("/create-from-ai")
-async def create_booking_from_ai(
-    ai_data: Dict[str, Any],
+
+@router.post("/create-from-ai", status_code=status.HTTP_201_CREATED)
+async def create_appointment_from_ai(
+    conversation_data: Dict,
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """
-    Create a complete booking from AI-extracted data.
-    
-    Args:
-        ai_data: Extracted data from AI processing
-        db: Database connection
-        
-    Returns:
-        Created appointment details
+    Cria um agendamento completo baseado nos dados coletados pelo chatbot.
     """
+    # A PRIMEIRA LINHA DEVE SER ESTA:
+    logging.info(f"PAYLOAD RECEBIDO PARA CRIAÇÃO: {conversation_data}")
+    
     try:
-        extracted_data = ai_data.get("extracted_data", {})
-
-        if "dados_extraidos" not in extracted_data:
-            extracted_data = extractor._process_extracted_data(extracted_data)
+        logging.info(f"Recebendo dados do chatbot: {conversation_data}")
         
-        # Validate data completeness
-        validation = extractor.validate_essential_data(extracted_data)
-        
-        if not validation["is_valid"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient data: {validation['missing_essential']}"
-            )
-        
-        # Extract patient data
+        # CORREÇÃO: Extrai dados da estrutura aninhada 'extracted_data'
+        extracted_data = conversation_data.get("extracted_data", {})
         paciente_data = extracted_data.get("paciente", {})
-        agendamento_info = extracted_data.get("agendamento_info", {})
-        preferencias = extracted_data.get("preferencias", {})
+        contato_data = extracted_data.get("contato", {})
+        agendamento_data = extracted_data.get("agendamento_info", {})
+        preferencias_data = extracted_data.get("preferencias", {})
         
-        # Create or get patient using patient_service
-        patient_id = await _create_or_get_patient_via_service(db, paciente_data)
-        
-        if not patient_id:
+        # Validação dos dados obrigatórios
+        required_patient_fields = ["nome", "cpf", "data_nascimento", "sexo"]
+        for field in required_patient_fields:
+            value = paciente_data.get(field)
+            if value is None or str(value).strip() == "":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Campo obrigatório ausente ou vazio: paciente.{field}"
+                )
+
+        # Validação dos dados de agendamento
+        if not preferencias_data.get("data_preferencia"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Could not create or find patient"
+                detail="Data de preferência é obrigatória"
             )
         
-        # Get IDs for related entities using booking services
-        specialty_id = await _get_specialty_id_via_service(db, agendamento_info.get("especialidade"))
-        doctor_id = await _get_doctor_by_specialty_via_service(db, specialty_id) if specialty_id else None
-        location_id = await _get_default_location_via_service(db)
-        appointment_type_id = await _get_appointment_type_id_via_service(db, agendamento_info.get("tipo_consulta", "Primeira Consulta"))
-        convenio_id = await _get_convenio_id(db, agendamento_info.get("nome_convenio")) if agendamento_info.get("tem_convenio") else None
+        # Converte sexo para enum
+        sexo_map = {"M": SexoEnum.MASCULINO, "F": SexoEnum.FEMININO, "O": SexoEnum.OUTRO}
+        sexo_enum = sexo_map.get(paciente_data["sexo"])
+        if not sexo_enum:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Sexo inválido: {paciente_data['sexo']}"
+            )
         
-        # Parse date and time
-        data_agendamento = _parse_appointment_datetime(
-            preferencias.get("data_preferencia"),
-            preferencias.get("horario_preferencia", "09:00")
+        # Verifica se paciente já existe pelo CPF
+        existing_patient = await get_patient_by_cpf(db, paciente_data["cpf"])
+        
+        if existing_patient:
+            logging.info(f"Paciente já existe com CPF {paciente_data['cpf']}: {existing_patient.id_paciente}")
+            patient_id = existing_patient.id_paciente
+        else:
+            # Cria novo paciente
+            patient_create = PacienteCreate(
+                nome=paciente_data["nome"],
+                cpf=paciente_data["cpf"],
+                data_nascimento=paciente_data["data_nascimento"],
+                sexo=sexo_enum
+            )
+            
+            new_patient = await create_patient(db, patient_create)
+            patient_id = new_patient.id_paciente
+            logging.info(f"Novo paciente criado com ID: {patient_id}")
+        
+        # Processa data e horário do agendamento
+        data_agendamento = preferencias_data["data_preferencia"]  # formato YYYY-MM-DD
+        horario_preferencia = preferencias_data.get("horario_preferencia", "09:00")
+        
+        # Converte horário para time object
+        try:
+            if ":" in horario_preferencia:
+                hora, minuto = map(int, horario_preferencia.split(":"))
+            else:
+                # Se for texto como "manhã", "tarde", usa horários padrão
+                hora_map = {
+                    "manhã": 9, "manha": 9,
+                    "tarde": 14,
+                    "noite": 19
+                }
+                hora = hora_map.get(horario_preferencia.lower(), 9)
+                minuto = 0
+                
+            hora_inicio = time(hora, minuto)
+            hora_fim = time(hora + 1 if hora < 23 else 23, minuto)  # 1 hora de duração
+            
+        except (ValueError, TypeError):
+            # Horário padrão se houver erro
+            hora_inicio = time(9, 0)
+            hora_fim = time(10, 0)
+        
+        # Combina data e hora
+        data_inicio = datetime.strptime(data_agendamento, "%Y-%m-%d").replace(
+            hour=hora_inicio.hour, minute=hora_inicio.minute
+        )
+        data_fim = datetime.strptime(data_agendamento, "%Y-%m-%d").replace(
+            hour=hora_fim.hour, minute=hora_fim.minute
         )
         
-        # Calculate end time (default 60 minutes)
-        data_fim = data_agendamento + timedelta(minutes=60)
-        
-        # Create appointment using booking_service
-        appointment_data = AgendamentoCreate(
+        # Cria o agendamento
+        # Para este MVP, usamos valores padrão para campos não coletados pelo chatbot
+        appointment_create = AgendamentoCreate(
             id_paciente=patient_id,
-            id_local=location_id,
-            id_convenio=convenio_id,
-            id_tipo_consulta=appointment_type_id,
-            id_exame=None,
-            id_medico=doctor_id,
-            data_hora_inicio=data_agendamento.isoformat(),
-            data_hora_fim=data_fim.isoformat(),
+            id_local=1,  # Valor padrão - pode ser configurado posteriormente
+            id_convenio=None,  # Será implementado quando tivermos cadastro de convênios
+            id_tipo_consulta=1 if agendamento_data.get("tipo") == "consulta" else None,
+            id_exame=1 if agendamento_data.get("tipo") == "exame" else None,
+            id_medico=None,  # Será implementado quando tivermos lógica de atribuição
+            data_hora_inicio=data_inicio,
+            data_hora_fim=data_fim,
             status=StatusAgendamentoEnum.AGENDADO,
-            observacoes=preferencias.get("observacoes")
+            observacoes=f"Agendamento criado via chatbot. Tipo: {agendamento_data.get('tipo', 'N/A')}, Especialidade/Exame: {agendamento_data.get('especialidade', '')}{ agendamento_data.get('nome_exame', '')}, Contato: {contato_data.get('telefone', 'N/A')}"
         )
         
-        # Use booking service to create appointment
-        created_appointment = await booking_service.create_appointment(db, appointment_data)
+        new_appointment = await create_appointment(db, appointment_create)
         
-        # Get complete appointment details
-        appointment_details = await _get_appointment_details(db, created_appointment.id_agendamento)
+        logging.info(f"Agendamento criado com sucesso - ID: {new_appointment.id_agendamento}")
         
         return {
             "success": True,
             "message": "Agendamento criado com sucesso!",
-            "appointment_id": created_appointment.id_agendamento,
-            "appointment_data": appointment_details
+            "data": {
+                "appointment_id": new_appointment.id_agendamento,
+                "patient_id": patient_id,
+                "patient_name": paciente_data["nome"],
+                "appointment_date": data_agendamento,
+                "appointment_time": horario_preferencia,
+                "type": agendamento_data.get("tipo"),
+                "specialty_or_exam": agendamento_data.get("especialidade", agendamento_data.get("nome_exame")),
+                "contact_phone": contato_data.get("telefone"),
+                "contact_email": contato_data.get("email")
+            }
         }
         
     except HTTPException:
+        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
+        logging.error(f"Erro ao criar agendamento via chatbot: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating appointment: {str(e)}"
+            detail=f"Erro interno ao criar agendamento: {str(e)}"
         )
-
-async def _create_or_get_patient_via_service(db: aiosqlite.Connection, paciente_data: Dict[str, Any]) -> int:
-    """Create or get existing patient using patient_service."""
-    nome = paciente_data.get("nome")
-    cpf = paciente_data.get("cpf")
-    
-    if not nome:
-        return None
-    
-    # Check if patient exists by CPF
-    if cpf:
-        cursor = await db.execute("SELECT id_paciente FROM Pacientes WHERE cpf = ?", (cpf,))
-        result = await cursor.fetchone()
-        if result:
-            return result[0]
-    
-    # Check by name
-    cursor = await db.execute("SELECT id_paciente FROM Pacientes WHERE nome = ?", (nome,))
-    result = await cursor.fetchone()
-    if result:
-        return result[0]
-    
-    # Create new patient using service
-    patient_create = PacienteCreate(
-        nome=nome,
-        cpf=cpf or "",
-        data_nascimento=_parse_date(paciente_data.get("data_nascimento")) or "1990-01-01",
-        sexo=paciente_data.get("sexo") or "O",
-        telefone="",
-        email="",
-        endereco=""
-    )
-    
-    created_patient = await patient_service.create_patient(db, patient_create)
-    return created_patient.id_paciente
-
-async def _get_specialty_id_via_service(db: aiosqlite.Connection, specialty_name: str) -> int:
-    """Get specialty ID by name using booking_service."""
-    if not specialty_name:
-        return None
-    
-    specialties = await booking_service.get_all_specialties(db)
-    for specialty in specialties:
-        if specialty_name.lower() in specialty.nome.lower():
-            return specialty.id_especialidade
-    return None
-
-async def _get_doctor_by_specialty_via_service(db: aiosqlite.Connection, specialty_id: int) -> int:
-    """Get first available doctor for specialty using booking_service."""
-    if not specialty_id:
-        return None
-    
-    doctors = await booking_service.get_all_doctors(db)
-    # Get doctors by specialty (simplified - would need a service method for this)
-    cursor = await db.execute(
-        """
-        SELECT m.id_medico FROM Medicos m
-        JOIN Medico_Especialidades me ON m.id_medico = me.id_medico
-        WHERE me.id_especialidade = ?
-        LIMIT 1
-        """,
-        (specialty_id,)
-    )
-    result = await cursor.fetchone()
-    return result[0] if result else None
-
-async def _get_default_location_via_service(db: aiosqlite.Connection) -> int:
-    """Get default location using booking_service."""
-    locations = await booking_service.get_all_locations(db)
-    return locations[0].id_local if locations else 1
-
-async def _get_appointment_type_id_via_service(db: aiosqlite.Connection, type_desc: str) -> int:
-    """Get appointment type ID using booking_service."""
-    if not type_desc:
-        type_desc = "Primeira Consulta"
-    
-    appointment_types = await booking_service.get_all_appointment_types(db)
-    for appt_type in appointment_types:
-        if type_desc.lower() in appt_type.descricao.lower():
-            return appt_type.id_tipo_consulta
-    
-    # Return first type as default
-    return appointment_types[0].id_tipo_consulta if appointment_types else 1
-
-async def _get_convenio_id(db: aiosqlite.Connection, convenio_name: str) -> int:
-    """Get convenio ID by name."""
-    if not convenio_name:
-        return None
-    
-    cursor = await db.execute(
-        "SELECT id_convenio FROM Convenios WHERE nome LIKE ?",
-        (f"%{convenio_name}%",)
-    )
-    result = await cursor.fetchone()
-    return result[0] if result else None
-
-def _parse_date(date_str: str) -> str:
-    """Parse date from DD/MM/YYYY to YYYY-MM-DD."""
-    if not date_str:
-        return None
-    
-    try:
-        if "/" in date_str:
-            day, month, year = date_str.split("/")
-            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-        return date_str
-    except:
-        return None
-
-def _parse_appointment_datetime(date_str: str, time_str: str = "09:00") -> datetime:
-    """Parse appointment date and time."""
-    
-    if not date_str:
-        # Default to tomorrow
-        date_str = (datetime.now() + timedelta(days=1)).strftime("%d/%m/%Y")
-    
-    parsed_date = _parse_date(date_str)
-    if not parsed_date:
-        parsed_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    if not time_str:
-        time_str = "09:00"
-    
-    return datetime.strptime(f"{parsed_date} {time_str}", "%Y-%m-%d %H:%M")
-
-async def _get_appointment_details(db: aiosqlite.Connection, appointment_id: int) -> Dict[str, Any]:
-    """Get complete appointment details."""
-    cursor = await db.execute(
-        """
-        SELECT 
-            a.*,
-            p.nome as paciente_nome,
-            p.cpf as paciente_cpf,
-            e.nome as especialidade_nome,
-            m.nome as medico_nome,
-            l.nome as local_nome,
-            tc.descricao as tipo_consulta,
-            c.nome as convenio_nome
-        FROM Agendamentos a
-        JOIN Pacientes p ON a.id_paciente = p.id_paciente
-        LEFT JOIN Medicos m ON a.id_medico = m.id_medico
-        LEFT JOIN Medico_Especialidades me ON m.id_medico = me.id_medico
-        LEFT JOIN Especialidades e ON me.id_especialidade = e.id_especialidade
-        LEFT JOIN Locais_Atendimento l ON a.id_local = l.id_local
-        LEFT JOIN Tipos_Consulta tc ON a.id_tipo_consulta = tc.id_tipo_consulta
-        LEFT JOIN Convenios c ON a.id_convenio = c.id_convenio
-        WHERE a.id_agendamento = ?
-        """,
-        (appointment_id,)
-    )
-    
-    result = await cursor.fetchone()
-    if result:
-        return dict(result)
-    return None
