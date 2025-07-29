@@ -1,0 +1,87 @@
+{
+  "initial_state": "GREETING",
+  "states": {
+    "GREETING": {
+      "message": "Olá! Sou seu assistente de agendamento. Você gostaria de marcar uma 'consulta' ou um 'exame'?",
+      "extract": "agendamento_info.tipo",
+      "transitions": {
+        "consulta": "GET_SPECIALTY",
+        "exame": "GET_EXAM_TYPE"
+      }
+    },
+    "GET_SPECIALTY": {
+      "message": "Qual a especialidade médica que você procura?",
+      "extract": "agendamento_info.especialidade",
+      "next_state": "GET_PATIENT_NAME"
+    },
+    "GET_EXAM_TYPE": {
+      "message": "Qual o nome do exame que você gostaria de agendar?",
+      "extract": "agendamento_info.nome_exame",
+      "next_state": "GET_PATIENT_NAME"
+    },
+    "GET_PATIENT_NAME": {
+      "message": "Qual o nome completo do paciente?",
+      "extract": "paciente.nome",
+      "next_state": "GET_PATIENT_CPF"
+    },
+    "GET_PATIENT_CPF": {
+      "message": "Qual o CPF do paciente? (apenas números)",
+      "extract": "paciente.cpf",
+      "next_state": "GET_PATIENT_BIRTHDATE"
+    },
+    "GET_PATIENT_BIRTHDATE": {
+      "message": "Qual a data de nascimento do paciente? (ex: 15/03/1990)",
+      "extract": "paciente.data_nascimento",
+      "next_state": "GET_PATIENT_GENDER"
+    },
+    "GET_PATIENT_GENDER": {
+      "message": "Qual o sexo do paciente? (Masculino, Feminino ou Outro)",
+      "extract": "paciente.sexo",
+      "next_state": "GET_PATIENT_PHONE"
+    },
+    "GET_PATIENT_PHONE": {
+      "message": "Qual o telefone de contato do paciente? (com DDD)",
+      "extract": "contato.telefone",
+      "next_state": "GET_PATIENT_EMAIL"
+    },
+    "GET_PATIENT_EMAIL": {
+      "message": "Qual o email do paciente? (opcional - pode responder 'não tenho')",
+      "extract": "contato.email",
+      "next_state": "GET_PREFERRED_DATE"
+    },
+    "GET_PREFERRED_DATE": {
+      "message": "Qual a data de sua preferência para o agendamento? (ex: 20/12/2024)",
+      "extract": "preferencias.data_preferencia",
+      "next_state": "GET_PREFERRED_TIME"
+    },
+    "GET_PREFERRED_TIME": {
+      "message": "Qual o horário de sua preferência? (ex: 14:30 ou 'manhã', 'tarde', 'noite')",
+      "extract": "preferencias.horario_preferencia",
+      "next_state": "GET_HEALTH_INSURANCE"
+    },
+    "GET_HEALTH_INSURANCE": {
+      "message": "O paciente possui convênio médico? Se sim, qual o nome? (ou responda 'particular')",
+      "extract": "agendamento_info.convenio",
+      "next_state": "CONFIRMATION"
+    },
+    "CONFIRMATION": {
+      "message": "Perfeito! Vou revisar todos os dados coletados:\n\n📋 **Dados do Paciente:**\n• Nome: {paciente.nome}\n• CPF: {paciente.cpf}\n• Data de Nascimento: {paciente.data_nascimento}\n• Sexo: {paciente.sexo}\n\n📞 **Contato:**\n• Telefone: {contato.telefone}\n• Email: {contato.email}\n\n🏥 **Agendamento:**\n• Tipo: {agendamento_info.tipo}\n• {especialidade_ou_exame}: {agendamento_info.especialidade}{agendamento_info.nome_exame}\n• Data Preferida: {preferencias.data_preferencia}\n• Horário Preferido: {preferencias.horario_preferencia}\n• Convênio: {agendamento_info.convenio}\n\nTodos os dados estão corretos? Posso prosseguir com o agendamento?",
+      "transitions": {
+        "sim": "END",
+        "correto": "END",
+        "ok": "END",
+        "pode": "END",
+        "não": "RESTART",
+        "incorreto": "RESTART",
+        "errado": "RESTART"
+      }
+    },
+    "END": {
+      "message": "🎉 Agendamento processado com sucesso! \n\nEm breve você receberá uma confirmação no telefone {contato.telefone}{email_confirmation}. \n\nObrigado por usar nosso sistema de agendamento!"
+    },
+    "RESTART": {
+      "message": "Tudo bem, vamos recomeçar o processo. Você quer marcar uma 'consulta' ou um 'exame'?",
+      "next_state": "GREETING"
+    }
+  }
+}

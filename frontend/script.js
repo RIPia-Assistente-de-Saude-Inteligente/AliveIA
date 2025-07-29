@@ -1,4 +1,4 @@
-// Configuration
+// Configuratio
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 // State management
@@ -131,40 +131,36 @@ async function createAppointment() {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                extracted_data: {
-                    ...conversationState.extractedData,
-                    dados_extraidos: ['paciente.nome', 'agendamento.tipo_agendamento', 'agendamento.especialidade'],
-                    dados_faltantes: []
-                }
+                extracted_data: conversationState.extractedData
             })
         });
         
         const data = await response.json();
         
         if (data.success) {
-            const appointment = data.appointment_data;
+            const appointment = data.data;
             const successMessage = `
 🎉 **Agendamento criado com sucesso!**
 
 📋 **Detalhes do Agendamento:**
-• **ID:** ${appointment.id_agendamento}
-• **Paciente:** ${appointment.paciente_nome}
-• **Médico:** ${appointment.medico_nome}
-• **Especialidade:** ${appointment.especialidade_nome}
-• **Data/Hora:** ${formatDateTime(appointment.data_hora_inicio)}
-• **Local:** ${appointment.local_nome}
-• **Convênio:** ${appointment.convenio_nome || 'Particular'}
-• **Observações:** ${appointment.observacoes || 'Nenhuma'}
+• **ID:** ${appointment.appointment_id}
+• **Paciente:** ${appointment.patient_name}
+• **Tipo:** ${appointment.type}
+• **Especialidade:** ${appointment.specialty_or_exam}
+• **Data:** ${appointment.appointment_date}
+• **Horário:** ${appointment.appointment_time}
+• **Telefone:** ${appointment.contact_phone}
+• **Email:** ${appointment.contact_email}
 
 ✅ Seu agendamento foi confirmado!
             `;
-            addMessage(successMessage, 'success');
+            addMessage(markdownToHtml(successMessage), 'success');
             
             // Reset state
             conversationState.canCreateAppointment = false;
             updateUI();
         } else {
-            addMessage('❌ Erro ao criar agendamento: ' + data.detail, 'error');
+            addMessage('❌ Erro ao criar agendamento: ' + (data.detail || data.message || 'Erro desconhecido'), 'error');
         }
     } catch (error) {
         console.error('Error:', error);
@@ -347,4 +343,12 @@ function formatDateTime(dateTimeString) {
     if (!dateTimeString) return 'Não informado';
     const date = new Date(dateTimeString);
     return date.toLocaleString('pt-BR');
+}
+
+function markdownToHtml(text) {
+    // Negrito: *texto*
+    let html = text.replace(/\\(.?)\\*/g, '<b>$1</b>');
+    // Quebra de linha: \n
+    html = html.replace(/\n/g, '<br>');
+    return html;
 }
