@@ -353,7 +353,7 @@ async def create_appointment_from_ai(
         return {
             "success": True,
             "message": "Agendamento criado com sucesso!",
-            "data": {
+            "appointment_data": {
                 "appointment_id": new_appointment.id_agendamento,
                 "patient_id": patient_id,
                 "patient_name": paciente_data["nome"],
