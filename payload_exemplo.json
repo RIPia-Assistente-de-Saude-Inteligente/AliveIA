@@ -1,0 +1,21 @@
+{
+  "paciente": {
+    "nome": "Maria Silva Santos",
+    "cpf": "12345678900",
+    "data_nascimento": "1985-08-25",
+    "sexo": "F"
+  },
+  "contato": {
+    "telefone": "11987654321",
+    "email": "maria@email.com"
+  },
+  "agendamento_info": {
+    "tipo": "consulta",
+    "especialidade": "Cardiologia",
+    "convenio": "Unimed"
+  },
+  "preferencias": {
+    "data_preferencia": "2025-12-20",
+    "horario_preferencia": "14:30"
+  }
+}

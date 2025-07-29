@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Agendamento Médico - IA</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏥 Sistema de Agendamento Médico</h1>
+            <p>Chatbot com Inteligência Artificial - Gemini</p>
+        </header>
+
+        <main>
+            <!-- Chat Interface -->
+            <div class="chat-section">
+                <div class="chat-container">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="message bot-message">
+                            <div class="message-content">
+                                <strong>🤖 Assistente:</strong> Olá! Sou seu assistente para agendamento médico. Como posso ajudá-lo hoje?
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="chat-input-container">
+                        <input type="text" id="messageInput" placeholder="Digite sua mensagem aqui..." maxlength="500">
+                        <button id="sendButton">Enviar</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Side Panel -->
+            <div class="side-panel">
+                <div class="panel-section">
+                    <h3>📊 Status da Conversa</h3>
+                    <div id="conversationStatus">
+                        <div class="status-item">
+                            <span class="status-label">Status:</span>
+                            <span id="statusValue" class="status-value">Aguardando...</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Progresso:</span>
+                            <span id="progressValue" class="status-value">0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>👤 Dados Coletados</h3>
+                    <div id="extractedData" class="data-display">
+                        <p class="no-data">Nenhum dado coletado ainda</p>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>🎯 Ações</h3>
+                    <div class="action-buttons">
+                        <button id="clearChat" class="btn-secondary">Limpar Chat</button>
+                        <button id="viewPatients" class="btn-info">Ver Pacientes</button>
+                        <button id="createAppointment" class="btn-success" disabled>Criar Agendamento</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Modal for Patient List -->
+        <div id="patientsModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>📋 Pacientes Cadastrados</h2>
+                <div id="patientsList" class="patients-list">
+                    <p>Carregando...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="loading-overlay">
+            <div class="spinner"></div>
+            <p>Processando com IA...</p>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

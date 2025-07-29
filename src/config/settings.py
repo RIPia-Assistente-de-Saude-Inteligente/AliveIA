@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"  # Ignora campos extras para evitar erro do Pydantic
 
 # Create settings instance
 settings = Settings()

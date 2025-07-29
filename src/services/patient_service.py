@@ -2,8 +2,12 @@
 Service layer for patient-related operations.
 """
 import aiosqlite
-from typing import List, Optional
-from database.models.schemas import PacienteCreate, PacienteUpdate, PacienteResponse
+import logging
+from typing import List, Optional, Dict, Any
+from datetime import datetime, date
+
+from src.database.models.schemas import PacienteCreate, PacienteUpdate, PacienteResponse
+from src.database.connection import get_db
 
 async def create_patient(db: aiosqlite.Connection, patient: PacienteCreate) -> PacienteResponse:
     """Creates a new patient in the database."""
@@ -21,6 +25,14 @@ async def create_patient(db: aiosqlite.Connection, patient: PacienteCreate) -> P
 async def get_patient_by_id(db: aiosqlite.Connection, patient_id: int) -> Optional[PacienteResponse]:
     """Retrieves a patient by their ID."""
     cursor = await db.execute("SELECT * FROM Pacientes WHERE id_paciente = ?", (patient_id,))
+    row = await cursor.fetchone()
+    if row:
+        return PacienteResponse(**dict(row))
+    return None
+
+async def get_patient_by_cpf(db: aiosqlite.Connection, cpf: str) -> Optional[PacienteResponse]:
+    """Retrieves a patient by their CPF."""
+    cursor = await db.execute("SELECT * FROM Pacientes WHERE cpf = ?", (cpf,))
     row = await cursor.fetchone()
     if row:
         return PacienteResponse(**dict(row))
