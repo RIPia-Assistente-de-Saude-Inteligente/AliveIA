@@ -1,37 +1,38 @@
-"""
-Extrator de dados para agendamento de consultas usando API do Gemini
-"""
+# src/chatbot/core/data_extractor.py
 
 import os
+import re
 import json
+import hashlib
 import logging
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-
-load_dotenv()
+# Configuração básica de logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+load_dotenv()
+
 
 class ConsultationDataExtractor:
-    """Extrai dados necessários para agendamento de consultas usando Gemini"""
-    
     def __init__(self):
-        """Inicializa o extrator com configurações do Gemini"""
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise ValueError("GEMINI_API_KEY não encontrada no arquivo .env")
-        
+
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        # Template para extração de dados
+
+        self._cache = {}
+        self._cache_hits = 0
+        self._api_calls = 0
+
         self.extraction_prompt = """
         Você é um assistente médico especializado em extrair informações para agendamento de consultas.
-        
         Analise a mensagem do paciente e extraia APENAS as informações fornecidas explicitamente.
         Não invente ou suponha dados que não foram mencionados.
-        
+
         RESPONDA APENAS EM FORMATO JSON VÁLIDO, exatamente como mostrado abaixo:
 
         {{
@@ -63,58 +64,38 @@ class ConsultationDataExtractor:
 
     def analyze_user_response(self, chatbot_question: str, user_message: str, target_field: str,
                               valid_options: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Analisa a resposta do usuário para uma pergunta do chatbot e extrai informações úteis.
 
-        Etapas:
-        - Verifica cache para evitar recomputação
-        - Tenta processar localmente para casos simples
-        - Se necessário, usa IA com prompt otimizado
-        - Retorna dicionário com: intent, is_valid, extracted_value e error_message
-        """
-
-        # 🔍 1. Verificação de cache
         cache_key = self._generate_cache_key(user_message, target_field, valid_options)
         if cache_key in self._cache:
             self._cache_hits += 1
             logging.info(f"✅ Cache HIT para '{user_message}' (hits: {self._cache_hits})")
             return self._cache[cache_key]
 
-        # ⚡ 2. Tentativa de processamento local (mais rápido e econômico)
         local_result = self._try_local_processing(user_message, target_field, valid_options)
         if local_result:
             logging.info(f"⚡ Processamento LOCAL para '{user_message}'")
             self._cache[cache_key] = local_result
             return local_result
 
-        # ⚠️ 3. Verificação de modelo IA
-        if not self.model:
-            logging.error("❌ Modelo da IA não foi configurado corretamente.")
-            result = self._error_result(user_message, "Modelo da IA não configurado.")
-            self._cache[cache_key] = result
-            return result
-
-        # 🧠 4. Criação do prompt dinâmico
         validation_text = f"Opções válidas: {valid_options}" if valid_options else "Sem validação específica"
         prompt = f"""Analise rapidamente:
-    Pergunta: "{chatbot_question}"
-    Resposta: "{user_message}"
-    Campo: {target_field}
-    {validation_text}
+Pergunta: "{chatbot_question}"
+Resposta: "{user_message}"
+Campo: {target_field}
+{validation_text}
 
-    Retorne JSON:
-    - "intent": "PROVIDE_INFO" ou "ASK_QUESTION"
-    - "is_valid": true/false
-    - "extracted_value": valor principal ou null
-    - "error_message": mensagem de erro ou null
+Retorne JSON:
+- "intent": "PROVIDE_INFO" ou "ASK_QUESTION"
+- "is_valid": true/false
+- "extracted_value": valor principal ou null
+- "error_message": mensagem de erro ou null
 
-    JSON:"""
+JSON:"""
 
         try:
             self._api_calls += 1
             logging.info(f"🔄 API call #{self._api_calls} para '{user_message[:30]}...'")
 
-            # ⚙️ 5. Configurações para resposta mais rápida e previsível
             generation_config = {
                 "temperature": 0.1,
                 "max_output_tokens": 200,
@@ -124,91 +105,111 @@ class ConsultationDataExtractor:
 
             response = self.model.generate_content(prompt, generation_config=generation_config)
             raw_response_text = response.text.strip()
-            logging.info(f"✅ IA respondeu ({len(raw_response_text)} chars)")
 
-            # 🧹 6. Limpeza do texto retornado
-            clean_response = (
-                raw_response_text
-                .replace("```json", "")
-                .replace("```", "")
-                .strip()
-            )
-
+            clean_response = raw_response_text.replace("```json", "").replace("```", "").strip()
             analysis = json.loads(clean_response)
 
-            # 💾 7. Armazena no cache
             self._cache[cache_key] = analysis
             logging.info(f"💾 Resultado salvo no cache (total: {len(self._cache)} entradas)")
             return analysis
 
         except json.JSONDecodeError as e:
-            logging.error(f"❌ JSON inválido: {e}")
-            result = self._error_result(user_message, "Erro de processamento.")
-            self._cache[cache_key] = result
-            return result
-
+            logging.error(f"JSON inválido: {e}")
+            return self._error_result(user_message, "Erro de processamento.")
         except Exception as e:
-            logging.error(f"❌ Erro na IA: {e}")
-            result = self._error_result(user_message, "Erro de comunicação.")
-            self._cache[cache_key] = result
-            return result
+            logging.error(f"Erro na IA: {e}")
+            return self._error_result(user_message, "Erro de comunicação.")
 
-    def _error_result(self, user_message: str, msg: str) -> Dict[str, Any]:
-        """Gera resposta padrão de erro para falhas de processamento ou IA"""
-        return {
-            "intent": "PROVIDE_INFO",
-            "is_valid": False,
-            "extracted_value": user_message,
-            "error_message": msg
-        }
+    def _try_local_processing(self, user_message: str, target_field: str, valid_options: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+        message_lower = user_message.lower().strip()
+
+        if any(q in message_lower for q in ['que', 'qual', 'quando', 'como', 'onde', 'opções', '?']):
+            return {"intent": "ASK_QUESTION", "is_valid": True, "extracted_value": None, "error_message": None}
+
+        if target_field == "cpf":
+            cpf_digits = re.sub(r'\D', '', user_message)
+            if len(cpf_digits) == 11:
+                return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": cpf_digits, "error_message": None}
+            else:
+                return {"intent": "PROVIDE_INFO", "is_valid": False, "extracted_value": user_message, "error_message": "CPF deve ter 11 dígitos."}
+
+        if target_field == "sexo":
+            sexo_map = {
+                'masculino': 'M', 'homem': 'M', 'macho': 'M', 'm': 'M',
+                'feminino': 'F', 'mulher': 'F', 'femea': 'F', 'f': 'F',
+                'outro': 'O', 'nenhum': 'O', 'prefiro não informar': 'O', 'o': 'O'
+            }
+            for key, value in sexo_map.items():
+                if key in message_lower:
+                    return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": value, "error_message": None}
+
+        if target_field == "data_nascimento":
+            date_patterns = [r'(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})']
+            for pattern in date_patterns:
+                match = re.search(pattern, user_message)
+                if match:
+                    day, month, year = match.groups()
+                    try:
+                        day, month, year = int(day), int(month), int(year)
+                        if 1 <= day <= 31 and 1 <= month <= 12 and 1900 <= year <= 2024:
+                            return {"intent": "PROVIDE_INFO", "is_valid": True,
+                                    "extracted_value": f"{year:04d}-{month:02d}-{day:02d}", "error_message": None}
+                    except:
+                        pass
+
+        if target_field == "telefone":
+            phone_digits = re.sub(r'\D', '', user_message)
+            if 10 <= len(phone_digits) <= 11:
+                return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": phone_digits, "error_message": None}
+            else:
+                return {"intent": "PROVIDE_INFO", "is_valid": False, "extracted_value": user_message, "error_message": "Telefone inválido."}
+
+        if target_field == "email":
+            if any(phrase in message_lower for phrase in ['não tenho', 'skip', 'pular']):
+                return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": "Não informado", "error_message": None}
+            if '@' in user_message and '.' in user_message.split('@')[-1]:
+                return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": user_message.strip(), "error_message": None}
+
+        if target_field == "convenio":
+            if any(word in message_lower for word in ['particular', 'sem convenio', 'não tenho', 'não']):
+                return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": "Particular", "error_message": None}
+            elif len(user_message.strip()) > 2:
+                return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": user_message.strip(), "error_message": None}
+
+        if valid_options and target_field == "especialidade":
+            for option in valid_options:
+                if option.lower() in message_lower or message_lower in option.lower():
+                    return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": option, "error_message": None}
+
+        if target_field in ["nome", "paciente", "nome_exame", "horario_preferencia"]:
+            if len(user_message.strip()) > 2:
+                return {"intent": "PROVIDE_INFO", "is_valid": True, "extracted_value": user_message.strip(), "error_message": None}
+
+        return None
 
     def extract_consultation_data(self, message: str) -> Dict[str, Any]:
-        """
-        Extrai dados de consulta da mensagem do paciente
-        
-        Args:
-            message: Mensagem do paciente
-            
-        Returns:
-            Dict com dados extraídos estruturados
-        """
         try:
-            # Preparar prompt com a mensagem
             prompt = self.extraction_prompt.format(mensagem=message)
-            
-            # Gerar resposta
             response = self.model.generate_content(prompt)
-            
-            # Parsear JSON da resposta
             data = self._parse_json_response(response.text)
-            
-            # Processar e validar dados extraídos
-            processed_data = self._process_extracted_data(data)
-            
-            logger.info(f"Dados extraídos: {len(processed_data['dados_extraidos'])} campos")
-            
-            return processed_data
-            
+            return self._process_extracted_data(data)
         except Exception as e:
             logger.error(f"Erro ao extrair dados: {e}")
             return self._get_empty_response()
-    
+
     def generate_missing_data_questions(self, extracted_data: Dict[str, Any]) -> str:
-        """
-        Gera perguntas para completar dados faltantes (pode perguntar mais de um campo por vez)
-        Sempre inclui o CPF se estiver faltando.
-        """
         try:
             if not extracted_data or not isinstance(extracted_data, dict):
                 extracted_data = self._get_empty_response()
             for section in ['paciente', 'agendamento_info', 'preferencias']:
                 if section not in extracted_data or not isinstance(extracted_data[section], dict):
                     extracted_data[section] = {}
+
             missing_fields = extracted_data.get('dados_faltantes', [])
             if not missing_fields:
                 return "Perfeito! Tenho todas as informações necessárias para o agendamento."
+
             perguntas = []
-            # Mapeamento para nomes amigáveis
             nomes_amigaveis = {
                 'paciente.nome': 'Nome completo do paciente',
                 'paciente.cpf': 'CPF do paciente (apenas números, 11 dígitos)',
@@ -220,142 +221,32 @@ class ConsultationDataExtractor:
                 'preferencias.data_preferencia': 'Data preferencial para o agendamento',
                 'preferencias.observacoes': 'Observações ou sintomas'
             }
-            # Perguntas principais
+
             for campo in ['paciente.nome','paciente.cpf','agendamento.tipo_agendamento','agendamento.especialidade']:
                 if campo in missing_fields:
                     perguntas.append(f'<b>{nomes_amigaveis[campo]}</b>')
-            # Extras formatados em lista
-            extras = [campo for campo in missing_fields if campo not in ['paciente.nome','paciente.cpf','agendamento.tipo_agendamento','agendamento.especialidade']]
+
+            extras = [campo for campo in missing_fields if campo not in perguntas]
             if extras:
-                perguntas.append('<b>Outros dados:</b><ul>' + ''.join(f'<li>{nomes_amigaveis.get(campo, campo.replace(".", " "))}</li>' for campo in extras) + '</ul>')
-            return (
-                'Por favor, informe os seguintes dados para prosseguir com o agendamento:<br>' +
-                '<ul>' + ''.join(f'<li>{p}</li>' for p in perguntas) + '</ul>'
-            )
-        except Exception as e:
-            logger.error(f"Erro ao gerar perguntas para dados faltantes: {e}\nDados extraídos: {extracted_data}")
-            return "Desculpe, ocorreu um erro ao gerar a próxima pergunta. Por favor, tente novamente."
+                perguntas.append('<b>Outros dados:</b><ul>' + ''.join(f'<li>{nomes_amigaveis.get(c, c)}</li>' for c in extras) + '</ul>')
 
-    def _parse_json_response(self, response_text: str) -> Dict[str, Any]:
-        """Parse da resposta JSON do Gemini"""
-        try:
-            # Limpar resposta (remover markdown se houver)
-            clean_response = response_text.strip()
-            if clean_response.startswith('```json'):
-                clean_response = clean_response[7:]
-            if clean_response.endswith('```'):
-                clean_response = clean_response[:-3]
-            
-            return json.loads(clean_response.strip())
-        
+            return 'Por favor, informe os seguintes dados:<br>' + '<ul>' + ''.join(f'<li>{p}</li>' for p in perguntas) + '</ul>'
         except Exception as e:
-            logger.error(f"Erro ao fazer parse do JSON da resposta do Gemini: {e}\nResposta recebida: {response_text}")
-            # Retorna resposta vazia para evitar erro 500
-            return self._get_empty_response()
+            logger.error(f"Erro ao gerar perguntas: {e}")
+            return "Desculpe, ocorreu um erro. Por favor, tente novamente."
 
-    def _process_extracted_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Processa e valida os dados extraídos"""
-        dados_extraidos = []
-        dados_faltantes = []
-        # Verificar dados do paciente
-        paciente = data.get('paciente', {})
-        for campo in ['nome', 'cpf', 'data_nascimento', 'sexo']:
-            valor = paciente.get(campo)
-            if isinstance(valor, str) and valor.strip() == '':
-                paciente[campo] = None
-            if paciente.get(campo):
-                dados_extraidos.append(f"paciente.{campo}")
-            else:
-                dados_faltantes.append(f"paciente.{campo}")
-        # Verificar dados do agendamento
-        agendamento_info = data.get('agendamento_info', {})
-        for campo in ['tipo_agendamento', 'especialidade', 'tem_convenio']:
-            valor = agendamento_info.get(campo)
-            if isinstance(valor, str) and valor.strip() == '':
-                agendamento_info[campo] = None
-            if agendamento_info.get(campo) is not None:
-                dados_extraidos.append(f"agendamento.{campo}")
-            else:
-                dados_faltantes.append(f"agendamento.{campo}")
-        # Verificar preferências
-        preferencias = data.get('preferencias', {})
-        for campo in ['data_preferencia', 'observacoes']:
-            valor = preferencias.get(campo)
-            if isinstance(valor, str) and valor.strip() == '':
-                preferencias[campo] = None
-            if preferencias.get(campo):
-                dados_extraidos.append(f"preferencias.{campo}")
-            else:
-                dados_faltantes.append(f"preferencias.{campo}")
-        # Atualizar listas no resultado
-        data['dados_extraidos'] = dados_extraidos
-        data['dados_faltantes'] = dados_faltantes
-        return data
-    
-    def _get_empty_response(self) -> Dict[str, Any]:
-        """Retorna resposta vazia em caso de erro"""
-        return {
-            "paciente": {
-                "nome": None,
-                "cpf": None,
-                "data_nascimento": None,
-                "sexo": None
-            },
-            "agendamento_info": {
-                "tipo_agendamento": None,
-                "tipo_consulta": None,
-                "nome_exame": None,
-                "especialidade": None,
-                "tem_convenio": None,
-                "nome_convenio": None
-            },
-            "preferencias": {
-                "data_preferencia": None,
-                "horario_preferencia": None,
-                "periodo_preferencia": None,
-                "local_preferencia": None,
-                "observacoes": None
-            },
-            "dados_extraidos": [],
-            "dados_faltantes": [
-                "paciente.nome", "paciente.cpf", "agendamento.tipo_agendamento",
-                "agendamento.especialidade", "preferencias.data_preferencia"
-            ]
-        }
-    
     def validate_essential_data(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Valida se os dados essenciais foram coletados
-        
-        Args:
-            extracted_data: Dados extraídos
-            
-        Returns:
-            Dict com status de validação
-        """
-        essential_fields = [
-            "paciente.nome",
-            "agendamento.tipo_agendamento", 
-            "agendamento.especialidade"
-        ]
-        
-        missing_essential = []
-        for field in essential_fields:
-            if field not in extracted_data.get('dados_extraidos', []):
-                missing_essential.append(field)
-        
+        essential_fields = ["paciente.nome", "agendamento.tipo_agendamento", "agendamento.especialidade"]
+        missing_essential = [f for f in essential_fields if f not in extracted_data.get('dados_extraidos', [])]
+
         return {
             "is_valid": len(missing_essential) == 0,
             "missing_essential": missing_essential,
-            "can_proceed": len(missing_essential) <= 1,  # Pode prosseguir se faltar apenas 1 campo essencial
+            "can_proceed": len(missing_essential) <= 1,
             "completion_percentage": (len(essential_fields) - len(missing_essential)) / len(essential_fields) * 100
         }
 
     def merge_extracted_data(self, previous: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Mescla os dados já coletados com os novos dados extraídos da mensagem atual.
-        Sempre prioriza valores não nulos do novo dado.
-        """
         result = previous.copy() if previous else {}
         for section in ['paciente', 'agendamento_info', 'preferencias']:
             if section not in result or not isinstance(result[section], dict):
@@ -365,5 +256,79 @@ class ConsultationDataExtractor:
                     result[section][key] = value
                 elif key not in result[section]:
                     result[section][key] = None
-        # Atualiza listas de extraídos/faltantes
         return self._process_extracted_data(result)
+
+    def _parse_json_response(self, response_text: str) -> Dict[str, Any]:
+        try:
+            clean_response = response_text.strip()
+            if clean_response.startswith('```json'):
+                clean_response = clean_response[7:]
+            if clean_response.endswith('```'):
+                clean_response = clean_response[:-3]
+            return json.loads(clean_response.strip())
+        except Exception as e:
+            logger.error(f"Erro ao fazer parse do JSON: {e}\nResposta: {response_text}")
+            return self._get_empty_response()
+
+    def _process_extracted_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        dados_extraidos = []
+        dados_faltantes = []
+
+        for section_name, fields in {
+            "paciente": ['nome', 'cpf', 'data_nascimento', 'sexo'],
+            "agendamento_info": ['tipo_agendamento', 'especialidade', 'tem_convenio'],
+            "preferencias": ['data_preferencia', 'observacoes']
+        }.items():
+            section = data.get(section_name, {})
+            for campo in fields:
+                valor = section.get(campo)
+                if isinstance(valor, str) and valor.strip() == '':
+                    section[campo] = None
+                if section.get(campo) is not None:
+                    dados_extraidos.append(f"{section_name}.{campo}")
+                else:
+                    dados_faltantes.append(f"{section_name}.{campo}")
+
+        data['dados_extraidos'] = dados_extraidos
+        data['dados_faltantes'] = dados_faltantes
+        return data
+
+    def _get_empty_response(self) -> Dict[str, Any]:
+        return {
+            "paciente": {"nome": None, "cpf": None, "data_nascimento": None, "sexo": None},
+            "agendamento_info": {
+                "tipo_agendamento": None, "tipo_consulta": None, "nome_exame": None,
+                "especialidade": None, "tem_convenio": None, "nome_convenio": None
+            },
+            "preferencias": {
+                "data_preferencia": None, "horario_preferencia": None,
+                "periodo_preferencia": None, "local_preferencia": None, "observacoes": None
+            },
+            "dados_extraidos": [],
+            "dados_faltantes": [
+                "paciente.nome", "paciente.cpf", "agendamento.tipo_agendamento",
+                "agendamento.especialidade", "preferencias.data_preferencia"
+            ]
+        }
+
+    def _generate_cache_key(self, user_message: str, target_field: str, valid_options: Optional[List[str]]) -> str:
+        normalized_message = user_message.lower().strip()
+        options_str = str(sorted(valid_options)) if valid_options else "none"
+        combined = f"{normalized_message}|{target_field}|{options_str}"
+        return hashlib.md5(combined.encode()).hexdigest()
+
+    def _error_result(self, user_message: str, msg: str) -> Dict[str, Any]:
+        return {
+            "intent": "PROVIDE_INFO",
+            "is_valid": False,
+            "extracted_value": user_message,
+            "error_message": msg
+        }
+
+    def get_cache_stats(self) -> Dict[str, int]:
+        return {
+            "cache_size": len(self._cache),
+            "cache_hits": self._cache_hits,
+            "api_calls": self._api_calls,
+            "hit_ratio": round(self._cache_hits / max(1, self._cache_hits + self._api_calls) * 100, 2)
+        }

@@ -35,7 +35,7 @@ async def update_patient(db: aiosqlite.Connection, patient_id: int, patient: Pac
     """Updates a patient's information."""
     update_data = patient.model_dump(exclude_unset=True)
     if not update_data:
-        return await get_patient_by_id(db, patient_id)
+        return await get_patient_by_cpf(db, patient_id)
 
     fields = ", ".join([f"{key} = ?" for key in update_data.keys()])
     values = list(update_data.values())
@@ -45,7 +45,7 @@ async def update_patient(db: aiosqlite.Connection, patient_id: int, patient: Pac
     await db.commit()
 
     if cursor.rowcount > 0:
-        return await get_patient_by_id(db, patient_id)
+        return await get_patient_by_cpf(db, patient_id)
     return None
 
 async def delete_patient(db: aiosqlite.Connection, patient_id: int) -> bool:

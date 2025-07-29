@@ -144,7 +144,7 @@ function handleAIResponse(data) {
     if (data.status === 'need_more_info') {
         addMessage('🤖 ' + data.next_question, 'bot');
     } else if (data.status === 'ready_to_book') {
-        addMessage('✅ ' + data.message + '\n\n📋 Dados coletados com sucesso! Você pode revisar as informações no painel lateral e criar o agendamento.', 'success');
+        addMessage('✅ ' + data.message + '\n\nAgendamento criado com sucesso!', 'success');
     }
     
     updateUI();
