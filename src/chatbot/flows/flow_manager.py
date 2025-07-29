@@ -13,7 +13,7 @@ class FlowManager:
         with open(flow_path, 'r', encoding='utf-8') as f:
             self.flow = json.load(f)
         self.user_conversations = {}
-        self.data_extractor = ConsultationDataExtractor(model)
+        self.data_extractor = ConsultationDataExtractor()
         
         logging.info("✅ FlowManager inicializado com validação local de datas")
 

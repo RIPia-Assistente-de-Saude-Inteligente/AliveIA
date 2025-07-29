@@ -5,9 +5,10 @@ Extrator de dados para agendamento de consultas usando API do Gemini
 import os
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 import google.generativeai as genai
+
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -59,7 +60,108 @@ class ConsultationDataExtractor:
 
         Mensagem do paciente: "{mensagem}"
         """
-    
+
+    def analyze_user_response(self, chatbot_question: str, user_message: str, target_field: str,
+                              valid_options: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Analisa a resposta do usuário para uma pergunta do chatbot e extrai informações úteis.
+
+        Etapas:
+        - Verifica cache para evitar recomputação
+        - Tenta processar localmente para casos simples
+        - Se necessário, usa IA com prompt otimizado
+        - Retorna dicionário com: intent, is_valid, extracted_value e error_message
+        """
+
+        # 🔍 1. Verificação de cache
+        cache_key = self._generate_cache_key(user_message, target_field, valid_options)
+        if cache_key in self._cache:
+            self._cache_hits += 1
+            logging.info(f"✅ Cache HIT para '{user_message}' (hits: {self._cache_hits})")
+            return self._cache[cache_key]
+
+        # ⚡ 2. Tentativa de processamento local (mais rápido e econômico)
+        local_result = self._try_local_processing(user_message, target_field, valid_options)
+        if local_result:
+            logging.info(f"⚡ Processamento LOCAL para '{user_message}'")
+            self._cache[cache_key] = local_result
+            return local_result
+
+        # ⚠️ 3. Verificação de modelo IA
+        if not self.model:
+            logging.error("❌ Modelo da IA não foi configurado corretamente.")
+            result = self._error_result(user_message, "Modelo da IA não configurado.")
+            self._cache[cache_key] = result
+            return result
+
+        # 🧠 4. Criação do prompt dinâmico
+        validation_text = f"Opções válidas: {valid_options}" if valid_options else "Sem validação específica"
+        prompt = f"""Analise rapidamente:
+    Pergunta: "{chatbot_question}"
+    Resposta: "{user_message}"
+    Campo: {target_field}
+    {validation_text}
+
+    Retorne JSON:
+    - "intent": "PROVIDE_INFO" ou "ASK_QUESTION"
+    - "is_valid": true/false
+    - "extracted_value": valor principal ou null
+    - "error_message": mensagem de erro ou null
+
+    JSON:"""
+
+        try:
+            self._api_calls += 1
+            logging.info(f"🔄 API call #{self._api_calls} para '{user_message[:30]}...'")
+
+            # ⚙️ 5. Configurações para resposta mais rápida e previsível
+            generation_config = {
+                "temperature": 0.1,
+                "max_output_tokens": 200,
+                "top_p": 0.8,
+                "top_k": 10
+            }
+
+            response = self.model.generate_content(prompt, generation_config=generation_config)
+            raw_response_text = response.text.strip()
+            logging.info(f"✅ IA respondeu ({len(raw_response_text)} chars)")
+
+            # 🧹 6. Limpeza do texto retornado
+            clean_response = (
+                raw_response_text
+                .replace("```json", "")
+                .replace("```", "")
+                .strip()
+            )
+
+            analysis = json.loads(clean_response)
+
+            # 💾 7. Armazena no cache
+            self._cache[cache_key] = analysis
+            logging.info(f"💾 Resultado salvo no cache (total: {len(self._cache)} entradas)")
+            return analysis
+
+        except json.JSONDecodeError as e:
+            logging.error(f"❌ JSON inválido: {e}")
+            result = self._error_result(user_message, "Erro de processamento.")
+            self._cache[cache_key] = result
+            return result
+
+        except Exception as e:
+            logging.error(f"❌ Erro na IA: {e}")
+            result = self._error_result(user_message, "Erro de comunicação.")
+            self._cache[cache_key] = result
+            return result
+
+    def _error_result(self, user_message: str, msg: str) -> Dict[str, Any]:
+        """Gera resposta padrão de erro para falhas de processamento ou IA"""
+        return {
+            "intent": "PROVIDE_INFO",
+            "is_valid": False,
+            "extracted_value": user_message,
+            "error_message": msg
+        }
+
     def extract_consultation_data(self, message: str) -> Dict[str, Any]:
         """
         Extrai dados de consulta da mensagem do paciente

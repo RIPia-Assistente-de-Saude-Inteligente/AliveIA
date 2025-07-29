@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     
     # Database settings
     database_url: str = "sqlite:///./medical_system.db"
+
+    gemini_api_key: str
+    gemini_model: str
+
+    class Config:
+        env_file = ".env"
     
     # FastAPI settings
     app_name: str = "Sistema de Agendamento Médico"
