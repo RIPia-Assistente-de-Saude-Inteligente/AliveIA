@@ -25,6 +25,160 @@ flow_manager = FlowManager(model=ai_model)
 router = APIRouter()
 
 
+@router.get("/exames")
+async def get_available_exams(db: aiosqlite.Connection = Depends(get_db)):
+    """
+    Retorna todos os exames disponíveis no banco de dados.
+    """
+    try:
+        async with db.execute("SELECT id_exame, nome, instrucoes_preparo, duracao_padrao_minutos FROM Exames ORDER BY nome") as cursor:
+            exams = await cursor.fetchall()
+            
+        exams_list = []
+        for exam in exams:
+            exams_list.append({
+                "id": exam[0],
+                "nome": exam[1],
+                "instrucoes_preparo": exam[2],
+                "duracao_minutos": exam[3]
+            })
+            
+        return {
+            "success": True,
+            "exames": exams_list,
+            "total": len(exams_list)
+        }
+        
+    except Exception as e:
+        logging.error(f"Erro ao buscar exames: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao buscar exames")
+
+
+@router.get("/locais")
+async def get_available_locations(db: aiosqlite.Connection = Depends(get_db)):
+    """
+    Retorna todos os locais de atendimento disponíveis no banco de dados.
+    """
+    try:
+        async with db.execute("SELECT id_local, nome, endereco FROM Locais_Atendimento ORDER BY nome") as cursor:
+            locations = await cursor.fetchall()
+            
+        locations_list = []
+        for location in locations:
+            locations_list.append({
+                "id": location[0],
+                "nome": location[1],
+                "endereco": location[2]
+            })
+            
+        return {
+            "success": True,
+            "locais": locations_list,
+            "total": len(locations_list)
+        }
+        
+    except Exception as e:
+        logging.error(f"Erro ao buscar locais: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao buscar locais")
+
+
+@router.get("/exames/{exame_id}/locais")
+async def get_locations_for_exam(exame_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """
+    Retorna os locais onde um exame específico pode ser realizado.
+    """
+    try:
+        query = """
+        SELECT l.id_local, l.nome, l.endereco, e.nome as exame_nome
+        FROM Locais_Atendimento l
+        JOIN Local_Exames le ON l.id_local = le.id_local
+        JOIN Exames e ON le.id_exame = e.id_exame
+        WHERE e.id_exame = ?
+        ORDER BY l.nome
+        """
+        
+        async with db.execute(query, (exame_id,)) as cursor:
+            results = await cursor.fetchall()
+            
+        if not results:
+            return {
+                "success": False,
+                "message": "Exame não encontrado ou não disponível em nenhum local",
+                "locais": []
+            }
+        
+        locations_list = []
+        exame_nome = results[0][3]  # Nome do exame do primeiro resultado
+        
+        for result in results:
+            locations_list.append({
+                "id": result[0],
+                "nome": result[1],
+                "endereco": result[2]
+            })
+            
+        return {
+            "success": True,
+            "exame_nome": exame_nome,
+            "exame_id": exame_id,
+            "locais": locations_list,
+            "total": len(locations_list)
+        }
+        
+    except Exception as e:
+        logging.error(f"Erro ao buscar locais para exame {exame_id}: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao buscar locais para o exame")
+
+
+@router.get("/locais/{local_id}/exames")
+async def get_exams_for_location(local_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """
+    Retorna os exames que podem ser realizados em um local específico.
+    """
+    try:
+        query = """
+        SELECT e.id_exame, e.nome, e.instrucoes_preparo, e.duracao_padrao_minutos, l.nome as local_nome
+        FROM Exames e
+        JOIN Local_Exames le ON e.id_exame = le.id_exame
+        JOIN Locais_Atendimento l ON le.id_local = l.id_local
+        WHERE l.id_local = ?
+        ORDER BY e.nome
+        """
+        
+        async with db.execute(query, (local_id,)) as cursor:
+            results = await cursor.fetchall()
+            
+        if not results:
+            return {
+                "success": False,
+                "message": "Local não encontrado ou não oferece exames",
+                "exames": []
+            }
+        
+        exams_list = []
+        local_nome = results[0][4]  # Nome do local do primeiro resultado
+        
+        for result in results:
+            exams_list.append({
+                "id": result[0],
+                "nome": result[1],
+                "instrucoes_preparo": result[2],
+                "duracao_minutos": result[3]
+            })
+            
+        return {
+            "success": True,
+            "local_nome": local_nome,
+            "local_id": local_id,
+            "exames": exams_list,
+            "total": len(exams_list)
+        }
+        
+    except Exception as e:
+        logging.error(f"Erro ao buscar exames para local {local_id}: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao buscar exames para o local")
+
+
 @router.post("/process-message")
 async def process_booking_message(
         message_data: Dict[str, str],
@@ -300,6 +454,148 @@ Conteúdo do PDF:
        raise HTTPException(status_code=500, detail="Erro ao processar PDF.")
 
 
+@router.get("/sugestoes-inteligentes")
+async def get_intelligent_suggestions(
+        exame_nome: str = None,
+        local_preferencia: str = None,
+        db: aiosqlite.Connection = Depends(get_db)
+):
+    """
+    Fornece sugestões inteligentes baseadas nos dados do banco.
+    Se um exame for informado, sugere locais onde pode ser feito.
+    Se um local for informado, sugere exames disponíveis.
+    """
+    try:
+        suggestions = {
+            "success": True,
+            "exames_sugeridos": [],
+            "locais_sugeridos": [],
+            "informacoes_adicionais": {}
+        }
+        
+        # Se um exame foi informado, busca locais onde pode ser feito
+        if exame_nome:
+            # Busca exame por nome (busca flexível)
+            exame_query = """
+            SELECT id_exame, nome, instrucoes_preparo, duracao_padrao_minutos 
+            FROM Exames 
+            WHERE LOWER(nome) LIKE LOWER(?) 
+            ORDER BY nome
+            LIMIT 5
+            """
+            
+            async with db.execute(exame_query, (f"%{exame_nome}%",)) as cursor:
+                exames = await cursor.fetchall()
+                
+            if exames:
+                # Para cada exame encontrado, busca os locais
+                for exame in exames:
+                    exame_id = exame[0]
+                    
+                    locais_query = """
+                    SELECT l.id_local, l.nome, l.endereco
+                    FROM Locais_Atendimento l
+                    JOIN Local_Exames le ON l.id_local = le.id_local
+                    WHERE le.id_exame = ?
+                    ORDER BY l.nome
+                    """
+                    
+                    async with db.execute(locais_query, (exame_id,)) as cursor:
+                        locais = await cursor.fetchall()
+                    
+                    locais_list = []
+                    for local in locais:
+                        locais_list.append({
+                            "id": local[0],
+                            "nome": local[1],
+                            "endereco": local[2]
+                        })
+                    
+                    suggestions["exames_sugeridos"].append({
+                        "id": exame[0],
+                        "nome": exame[1],
+                        "instrucoes_preparo": exame[2],
+                        "duracao_minutos": exame[3],
+                        "locais_disponiveis": locais_list
+                    })
+                    
+                    suggestions["informacoes_adicionais"]["exame_encontrado"] = True
+        
+        # Se um local foi informado, busca exames disponíveis
+        if local_preferencia:
+            local_query = """
+            SELECT id_local, nome, endereco 
+            FROM Locais_Atendimento 
+            WHERE LOWER(nome) LIKE LOWER(?) 
+            ORDER BY nome
+            LIMIT 3
+            """
+            
+            async with db.execute(local_query, (f"%{local_preferencia}%",)) as cursor:
+                locais = await cursor.fetchall()
+                
+            if locais:
+                # Para cada local encontrado, busca os exames
+                for local in locais:
+                    local_id = local[0]
+                    
+                    exames_query = """
+                    SELECT e.id_exame, e.nome, e.instrucoes_preparo, e.duracao_padrao_minutos
+                    FROM Exames e
+                    JOIN Local_Exames le ON e.id_exame = le.id_exame
+                    WHERE le.id_local = ?
+                    ORDER BY e.nome
+                    """
+                    
+                    async with db.execute(exames_query, (local_id,)) as cursor:
+                        exames = await cursor.fetchall()
+                    
+                    exames_list = []
+                    for exame in exames:
+                        exames_list.append({
+                            "id": exame[0],
+                            "nome": exame[1],
+                            "instrucoes_preparo": exame[2],
+                            "duracao_minutos": exame[3]
+                        })
+                    
+                    suggestions["locais_sugeridos"].append({
+                        "id": local[0],
+                        "nome": local[1],
+                        "endereco": local[2],
+                        "exames_disponiveis": exames_list
+                    })
+                    
+                    suggestions["informacoes_adicionais"]["local_encontrado"] = True
+        
+        # Se nenhum parâmetro foi informado, retorna sugestões gerais
+        if not exame_nome and not local_preferencia:
+            # Busca os 5 exames mais comuns (por simplicidade, vamos pegar os primeiros)
+            async with db.execute("SELECT id_exame, nome FROM Exames ORDER BY nome LIMIT 5") as cursor:
+                exames_comuns = await cursor.fetchall()
+                
+            # Busca todos os locais
+            async with db.execute("SELECT id_local, nome, endereco FROM Locais_Atendimento ORDER BY nome") as cursor:
+                todos_locais = await cursor.fetchall()
+            
+            suggestions["exames_sugeridos"] = [
+                {"id": exame[0], "nome": exame[1]} for exame in exames_comuns
+            ]
+            
+            suggestions["locais_sugeridos"] = [
+                {"id": local[0], "nome": local[1], "endereco": local[2]} 
+                for local in todos_locais
+            ]
+            
+            suggestions["informacoes_adicionais"]["sugestoes_gerais"] = True
+        
+        return suggestions
+        
+    except Exception as e:
+        logging.error(f"Erro ao buscar sugestões inteligentes: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao buscar sugestões")
+
+
 @router.post("/create-from-ai", status_code=status.HTTP_201_CREATED)
 async def create_appointment_from_ai(
         conversation_data: Dict,
@@ -399,12 +695,15 @@ async def create_appointment_from_ai(
             hour=hora_fim.hour, minute=hora_fim.minute
         )
 
-        # Seleciona um médico baseado na especialidade
+        # Para consultas: seleciona médico baseado na especialidade
+        # Para exames: busca o exame pelo nome
         especialidade_solicitada = agendamento_data.get("especialidade", "")
+        nome_exame_solicitado = agendamento_data.get("nome_exame", "")
         selected_doctor_id = None
         selected_doctor_name = "Aguardando confirmação"
+        selected_exam_id = None
         
-        if especialidade_solicitada:
+        if agendamento_data.get("tipo") == "consulta" and especialidade_solicitada:
             try:
                 # Busca médicos que atendem a especialidade solicitada
                 query = """
@@ -427,6 +726,38 @@ async def create_appointment_from_ai(
                         
             except Exception as e:
                 logging.error(f"Erro ao buscar médico por especialidade: {e}")
+                
+        elif agendamento_data.get("tipo") == "exame" and nome_exame_solicitado:
+            try:
+                # Busca o exame pelo nome (busca mais flexível)
+                query = "SELECT id_exame, nome FROM Exames WHERE LOWER(nome) LIKE LOWER(?) LIMIT 1"
+                
+                async with db.execute(query, (f"%{nome_exame_solicitado}%",)) as cursor:
+                    exam_row = await cursor.fetchone()
+                    if exam_row:
+                        selected_exam_id = exam_row[0]
+                        logging.info(f"Exame selecionado: {exam_row[1]} (ID: {selected_exam_id})")
+                    else:
+                        # Tenta busca ainda mais flexível, palavra por palavra
+                        words = nome_exame_solicitado.lower().split()
+                        for word in words:
+                            if len(word) > 2:  # Ignora palavras muito pequenas
+                                query = "SELECT id_exame, nome FROM Exames WHERE LOWER(nome) LIKE LOWER(?) LIMIT 1"
+                                async with db.execute(query, (f"%{word}%",)) as cursor:
+                                    exam_row = await cursor.fetchone()
+                                    if exam_row:
+                                        selected_exam_id = exam_row[0]
+                                        logging.info(f"Exame encontrado por palavra-chave '{word}': {exam_row[1]} (ID: {selected_exam_id})")
+                                        break
+                        
+                        if not selected_exam_id:
+                            logging.warning(f"Nenhum exame encontrado com o nome: {nome_exame_solicitado}")
+                            # Se não encontrar, usa o primeiro exame disponível como fallback
+                            selected_exam_id = 1
+                        
+            except Exception as e:
+                logging.error(f"Erro ao buscar exame: {e}")
+                selected_exam_id = 1
 
         # Cria o agendamento diretamente no banco sem usar o schema problemático
         cursor = await db.execute(
@@ -435,8 +766,10 @@ async def create_appointment_from_ai(
                                       data_hora_inicio, data_hora_fim, status, observacoes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (patient_id, 1, None, 1 if agendamento_data.get("tipo") == "consulta" else None,
-             1 if agendamento_data.get("tipo") == "exame" else None, selected_doctor_id,
+            (patient_id, 1, None, 
+             1 if agendamento_data.get("tipo") == "consulta" else None,
+             selected_exam_id if agendamento_data.get("tipo") == "exame" else None, 
+             selected_doctor_id,
              data_inicio, data_fim, StatusAgendamentoEnum.AGENDADO.value,
              f"Agendamento criado via chatbot. Tipo: {agendamento_data.get('tipo', 'N/A')}, Especialidade/Exame: {agendamento_data.get('especialidade', '')}{agendamento_data.get('nome_exame', '')}, Contato: {contato_data.get('telefone', 'N/A')}")
         )
@@ -452,8 +785,13 @@ async def create_appointment_from_ai(
         # Monta a string de data e hora para exibição
         data_hora_str = f"{data_agendamento_display} às {horario_preferencia_display}" if data_agendamento_display else "Não informado"
 
-        # Determina a especialidade ou exame
-        especialidade_valor = agendamento_data.get("especialidade") or agendamento_data.get("nome_exame") or "Não informado"
+        # Determina a especialidade ou exame e o nome do médico baseado no tipo
+        if agendamento_data.get("tipo") == "consulta":
+            especialidade_valor = agendamento_data.get("especialidade") or "Não informado"
+            medico_display = selected_doctor_name
+        else:  # exame
+            especialidade_valor = agendamento_data.get("nome_exame") or "Não informado"
+            medico_display = "Não aplicável (Exame)"
 
         return {
             "success": True,
@@ -461,7 +799,7 @@ async def create_appointment_from_ai(
             "appointment_data": {
                 "id_agendamento": appointment_id,
                 "nome_paciente": paciente_data.get("nome", "Não informado"),
-                "nome_medico": selected_doctor_name,  # Agora usa o médico selecionado
+                "nome_medico": medico_display,
                 "especialidade": especialidade_valor,
                 "data_agendamento": data_hora_str,  # Enviando data e hora combinadas
                 "local": agendamento_data.get("local", "Não informado"),
