@@ -62,7 +62,12 @@ function initializeEventListeners() {
 // Main Functions
 async function sendMessage() {
     const message = messageInput.value.trim();
-    if (!message || conversationState.isProcessing) return;
+    
+    // Proteção extra contra mensagens vazias ou undefined
+    if (!message || message === 'undefined' || message === 'null' || conversationState.isProcessing) {
+        console.warn('Tentativa de enviar mensagem inválida:', message);
+        return;
+    }
     
     // Add user message to chat
     addMessage(message, 'user');
@@ -117,13 +122,34 @@ document.getElementById("uploadPdf").addEventListener("change", async function (
         });
 
         const result = await response.json();
+        console.log("📥 Resposta completa do PDF:", result);
+        
         if (result.success) {
-            alert("PDF processado com sucesso. Dados extraídos!");
-            // Simula envio da mensagem ao chatbot
-            document.getElementById("messageInput").value = result.extracted_text;
-            document.getElementById("sendButton").click();
+            console.log("✅ PDF processado com sucesso!");
+            console.log("📊 Dados extraídos:", result.extracted_data);
+            console.log("📈 Validação:", result.validation);
+            
+            // Atualiza o estado da conversa com os dados extraídos
+            conversationState.extractedData = result.extracted_data;
+            conversationState.validationStatus = result.validation;
+            conversationState.canCreateAppointment = result.can_proceed;
+            
+            // Se o agendamento foi criado automaticamente, não mostra mensagem redundante
+            if (result.status === 'appointment_created') {
+                // Apenas processa a resposta - a mensagem de sucesso virá do handleAIResponse
+                handleAIResponse(result);
+            } else {
+                // Para outros casos, mostra mensagem de processamento
+                addMessage("📄 PDF processado com sucesso! Agendamento sendo criado...", 'user');
+                handleAIResponse(result);
+            }
+            
+            // Atualiza a UI
+            updateUI();
+            
         } else {
-            alert("Falha ao processar o PDF.");
+            console.error("❌ Erro ao processar PDF:", result);
+            alert("Falha ao processar o PDF: " + (result.detail || result.message || "Erro desconhecido"));
         }
     } catch (err) {
         console.error("Erro ao enviar PDF:", err);
@@ -142,31 +168,17 @@ function handleAIResponse(data) {
     
     // Add bot response
     if (data.status === 'need_more_info') {
-        addMessage('🤖 ' + data.next_question, 'bot');
+        if (data.next_question) {
+            addMessage('🤖 ' + data.next_question, 'bot');
+        }
     } else if (data.status === 'ready_to_book') {
         addMessage('✅ ' + '\n\n Informações coletadas, pronto para agendar!', 'success');
     } else if (data.status === 'appointment_created') {
-        // Agendamento foi criado automaticamente
-        const appointment = data.appointment_data;
-        if (appointment) {
-            const successMessage = `
-🎉 **Agendamento criado com sucesso!**
-
-📋 **Detalhes do Agendamento:**
-• **ID:** ${appointment.id_agendamento}\n
-• **Paciente:** ${appointment.nome_paciente}\n
-• **Médico:** ${appointment.nome_medico}\n
-• **Especialidade:** ${appointment.especialidade}\n
-• **Data/Hora:** ${appointment.data_agendamento}\n
-• **Local:** ${appointment.local}\n
-• **Convênio:** ${appointment.convenio || 'Particular'}\n
-• **Observações:** ${appointment.observacoes || 'Nenhuma'}\n
-
-✅ Seu agendamento foi confirmado!
-            `;
-            addMessage(successMessage, 'success');
+        // Agendamento foi criado automaticamente - usa a mensagem do backend
+        if (data.next_question) {
+            addMessage(data.next_question, 'success');
         } else {
-            addMessage('🤖 ' + data.next_question, 'bot');
+            addMessage('✅ Agendamento criado com sucesso!', 'success');
         }
         
         // Reset state
@@ -308,6 +320,12 @@ function closeModal() {
 
 // UI Helper Functions
 function addMessage(text, type = 'bot') {
+    // Verificação para evitar undefined
+    if (!text || text === 'undefined') {
+        console.warn('Tentativa de adicionar mensagem vazia ou undefined:', text);
+        return;
+    }
+    
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${type}-message`;
     
