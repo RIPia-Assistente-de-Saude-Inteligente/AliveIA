@@ -40,15 +40,19 @@ AliveIA é um projeto de assistente de saúde inteligente desenvolvido para prop
    # Para dependências front-end, utilize npm/yarn se necessário
    ```
 
-3. (Opcional) Configure variáveis de ambiente e arquivos de configuração conforme a documentação interna.
-
+3. Configure variáveis de ambiente e arquivos de configuração conforme a documentação interna.
+   Crie um arquivo .env para as configurações do Gemini
+   ```bash
+   GEMINI_API_KEY="sua-key"
+   GEMINI_MODEL=gemini-pro
+   ```
 ---
 
 ## Como usar
 
 1. Execute o servidor principal:
    ```bash
-   uvicorn main:app --reload --host localhost --port 8000
+    uvicorn main:app
    ```
 
 2. Acesse a interface web via navegador, conforme instruções impressas no terminal.
