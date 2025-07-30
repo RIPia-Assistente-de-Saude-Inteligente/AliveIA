@@ -52,7 +52,7 @@ AliveIA é um projeto de assistente de saúde inteligente desenvolvido para prop
 
 1. Execute o servidor principal:
    ```bash
-    uvicorn main:app
+   uvicorn main:app --host localhost 
    ```
 
 2. Acesse a interface web via navegador, conforme instruções impressas no terminal.
