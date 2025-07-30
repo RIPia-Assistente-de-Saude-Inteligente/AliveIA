@@ -333,29 +333,35 @@ async def process_pdf_file(pdf_file: UploadFile = File(...), db: aiosqlite.Conne
 Você receberá o conteúdo extraído de um PDF. Extraia todos os dados relevantes para agendamento de consulta médica.
 Se algum dado não estiver presente, coloque o valor como null.
 Responda SOMENTE com um JSON no seguinte formato:
-Se um campo não estiver presente no texto, **tente inferir** ou preencha com null (sem aspas).
-Nunca retorne campos vazios ("").
 
+IMPORTANTE: 
+- Se não encontrar telefone, use "não informado"
+- Se não encontrar email, use "não informado" 
+- Se não encontrar horário de preferência, use "manhã"
+- Se não encontrar local, use "Hospital Geral"
+- Se não encontrar convênio, use "Particular"
 
 {{
  "paciente": {{
    "nome": "...",
    "cpf": "...",
    "data_nascimento": "YYYY-MM-DD",
-   "sexo": "M", "F" ou "O"
+   "sexo": "M" ou "F" ou "O"
  }},
  "contato": {{
-   "telefone": "...",
-   "email": "..."
+   "telefone": "... ou não informado",
+   "email": "... ou não informado"
  }},
  "agendamento_info": {{
    "tipo": "consulta" ou "exame",
-   "especialidade": "...",
-   "nome_exame": "..."
+   "especialidade": "... (se for consulta)",
+   "nome_exame": "... (se for exame)",
+   "local": "Hospital Geral",
+   "convenio": "Particular"
  }},
  "preferencias": {{
    "data_preferencia": "YYYY-MM-DD",
-   "horario_preferencia": "HH:MM" ou "manhã" ou "tarde" ou "noite"
+   "horario_preferencia": "manhã" ou "tarde" ou "noite" ou "HH:MM"
  }}
 }}
 
@@ -377,15 +383,68 @@ Conteúdo do PDF:
        if "paciente" not in conversation_data or not conversation_data["paciente"].get("cpf"):
            raise HTTPException(status_code=400, detail="Os dados extraídos estão incompletos ou inválidos.")
 
-       # Opcional: já cria o agendamento automaticamente (remova se quiser controle manual)
-       agendamento_result = await create_appointment_from_ai({"extracted_data": conversation_data}, db)
+       logging.info(f"🔍 Dados extraídos do PDF: {conversation_data}")
 
-       return {
-           "success": True,
-           "message": "PDF processado com sucesso",
-           "extracted_data": conversation_data,
-           "agendamento": agendamento_result
-       }
+       # Cria o agendamento automaticamente já que todos os dados estão disponíveis
+       try:
+           agendamento_result = await create_appointment_from_ai({"extracted_data": conversation_data}, db)
+           
+           # Retorna sucesso com dados do agendamento criado
+           appointment_data = agendamento_result['appointment_data']
+           success_message = f"""🎉 **Agendamento criado automaticamente via PDF!**
+
+📋 **Detalhes do Agendamento:**
+• **ID:** {appointment_data['id_agendamento']}
+• **Paciente:** {appointment_data['nome_paciente']}
+• **Médico:** {appointment_data['nome_medico']}
+• **Especialidade:** {appointment_data['especialidade']}
+• **Data/Hora:** {appointment_data['data_agendamento']}
+• **Local:** {appointment_data['local']}
+• **Convênio:** {appointment_data['convenio']}
+
+✅ **Seu agendamento foi confirmado!**"""
+
+           response = {
+               "success": True,
+               "message": "PDF processado e agendamento criado com sucesso!",
+               "next_question": success_message,
+               "conversation_data": conversation_data,
+               "current_state": "END",
+               "extracted_data": conversation_data,
+               "status": "appointment_created",
+               "can_proceed": False,
+               "validation": {
+                   "is_valid": True,
+                   "completion_percentage": 100,
+                   "collected_fields": 11,
+                   "total_fields": 11
+               },
+               "appointment_data": appointment_data
+           }
+
+           return response
+           
+       except Exception as e:
+           logging.error(f"Erro ao criar agendamento via PDF: {e}")
+           # Se falhar, retorna dados para criação manual
+           response = {
+               "success": True,
+               "message": "PDF processado com sucesso!",
+               "next_question": f"PDF processado com sucesso! Os dados foram extraídos. Erro ao criar agendamento automaticamente: {str(e)}. Você pode tentar criar manualmente.",
+               "conversation_data": conversation_data,
+               "current_state": "CONFIRMATION",
+               "extracted_data": conversation_data,
+               "status": "ready_to_book",
+               "can_proceed": True,
+               "validation": {
+                   "is_valid": True,
+                   "completion_percentage": 100,
+                   "collected_fields": 11,
+                   "total_fields": 11
+               }
+           }
+
+           return response
 
    except json.JSONDecodeError as e:
        logging.error(f"❌ Erro ao decodificar JSON: {e}")
@@ -604,12 +663,12 @@ async def create_appointment_from_ai(
 
         # Processa data e horário do agendamento
         data_agendamento = preferencias_data["data_preferencia"]  # formato YYYY-MM-DD
-        horario_preferencia = preferencias_data.get("horario_preferencia", "09:00")
+        horario_preferencia = preferencias_data.get("horario_preferencia") or "09:00"  # Default se for None
 
         # Converte horário para time object
         try:
-            if ":" in horario_preferencia:
-                hora, minuto = map(int, horario_preferencia.split(":"))
+            if horario_preferencia and ":" in str(horario_preferencia):
+                hora, minuto = map(int, str(horario_preferencia).split(":"))
             else:
                 # Se for texto como "manhã", "tarde", usa horários padrão
                 hora_map = {
@@ -617,7 +676,7 @@ async def create_appointment_from_ai(
                     "tarde": 14,
                     "noite": 19
                 }
-                hora = hora_map.get(horario_preferencia.lower(), 9)
+                hora = hora_map.get(str(horario_preferencia).lower(), 9)
                 minuto = 0
 
             hora_inicio = time(hora, minuto)
@@ -720,11 +779,11 @@ async def create_appointment_from_ai(
         logging.info(f"Agendamento criado com sucesso - ID: {appointment_id}")
 
         # Pega os dados que já foram coletados anteriormente no fluxo
-        data_agendamento = preferencias_data.get("data_preferencia")
-        horario_preferencia = preferencias_data.get("horario_preferencia")
+        data_agendamento_display = preferencias_data.get("data_preferencia")
+        horario_preferencia_display = preferencias_data.get("horario_preferencia") or "09:00"
 
         # Monta a string de data e hora para exibição
-        data_hora_str = f"{data_agendamento} às {horario_preferencia}" if data_agendamento and horario_preferencia else "Não informado"
+        data_hora_str = f"{data_agendamento_display} às {horario_preferencia_display}" if data_agendamento_display else "Não informado"
 
         # Determina a especialidade ou exame e o nome do médico baseado no tipo
         if agendamento_data.get("tipo") == "consulta":
