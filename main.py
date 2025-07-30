@@ -82,6 +82,8 @@ async def shutdown_event():
 app.include_router(ai_booking.router, prefix="/api/v1/ai-booking", tags=["AI Booking"])
 app.include_router(patients.router, prefix="/api/v1/patients", tags=["Patients"])
 app.include_router(booking.router, prefix="/api/v1/booking", tags=["Booking"])
+app.include_router(ai_booking.router, prefix="/api/v1/ai-booking", tags=["AI Booking"], dependencies=[Depends(verify_token)])
+
 
 if __name__ == "__main__":
     import uvicorn
