@@ -48,7 +48,7 @@ AliveIA é um projeto de assistente de saúde inteligente desenvolvido para prop
 
 1. Execute o servidor principal:
    ```bash
-   python main.py
+   uvicorn main:app --reload --host localhost --port 8000
    ```
 
 2. Acesse a interface web via navegador, conforme instruções impressas no terminal.
