@@ -202,3 +202,8 @@ class MedicosListResponse(BaseResponse):
 class AgendamentosListResponse(BaseResponse):
     data: List[AgendamentoResponse]
     total: int
+
+class BookingInput(BaseModel):
+    patient_id: int
+    exam_type: str
+    appointment_date: str
