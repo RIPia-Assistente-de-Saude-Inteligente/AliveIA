@@ -226,12 +226,35 @@ Conteúdo do PDF:
        # Opcional: já cria o agendamento automaticamente (remova se quiser controle manual)
        agendamento_result = await create_appointment_from_ai({"extracted_data": conversation_data}, db)
 
-       return {
+       # Atualiza a mensagem para incluir os detalhes do agendamento
+       appointment_data = agendamento_result['appointment_data']
+       logging.info(f"🔍 APPOINTMENT_DATA EXTRAÍDO: {appointment_data}")
+       success_message = f"""✅ {conversation_data.get("next_question")}
+
+       🎉 **Agendamento criado com sucesso!**
+
+       📋 **Detalhes do Agendamento:**
+       • **ID:** {appointment_data['id_agendamento']}
+       • **Paciente:** {appointment_data['nome_paciente']}
+       • **Médico:** {appointment_data['nome_medico']}
+       • **Especialidade:** {appointment_data['especialidade']}
+       • **Data/Hora:** {appointment_data['data_agendamento']}
+       • **Local:** {appointment_data['local']}
+       • **Convênio:** {appointment_data['convenio']}"""
+
+       response = {
            "success": True,
-           "message": "PDF processado com sucesso",
-           "extracted_data": conversation_data,
-           "agendamento": agendamento_result
+           "next_question": success_message,
+           "conversation_data": conversation_data.get("conversation_data"),
+           "current_state": conversation_data.get("current_state"),
+           "extracted_data": conversation_data.get("conversation_data"),
+           "status": "appointment_created",
+           "can_proceed": False,
+           "validation": {"is_valid": True},
+           "appointment_data": agendamento_result['appointment_data']
        }
+
+       return response
 
    except json.JSONDecodeError as e:
        logging.error(f"❌ Erro ao decodificar JSON: {e}")
