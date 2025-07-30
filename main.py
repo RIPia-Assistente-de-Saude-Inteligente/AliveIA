@@ -2,6 +2,7 @@
 FastAPI main application for the medical appointment system.
 Entry point centralizado da aplicação.
 """
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,8 +10,16 @@ from fastapi.responses import FileResponse
 from src.routes import ai_booking, patients, booking
 from src.config.settings import settings
 from src.database.connection import db_manager
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends
 import os
 import logging
+
+security = HTTPBearer()
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials.credentials != settings.api_token:
+        raise HTTPException(status_code=403, detail="Token inválido")
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO)
