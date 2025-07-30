@@ -3,6 +3,7 @@ API routes for the booking process.
 """
 from fastapi import APIRouter, Depends, status
 from typing import List
+from database.models.schemas import BookingInput
 import aiosqlite
 
 from src.database.connection import get_db
@@ -44,3 +45,7 @@ async def list_exams(db: aiosqlite.Connection = Depends(get_db)):
 async def create_new_appointment(appt: AgendamentoCreate, db: aiosqlite.Connection = Depends(get_db)):
     """Create a new appointment for a patient."""
     return await booking_service.create_appointment(db, appt)
+@router.post("/booking")
+def create_booking(data: BookingInput):
+    # use data.patient_id etc
+    return {"msg": "Agendado com sucesso"}
