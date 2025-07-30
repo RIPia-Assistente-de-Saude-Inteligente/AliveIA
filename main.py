@@ -36,11 +36,12 @@ app = FastAPI(
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins if hasattr(settings, 'allowed_origins') else ["*"],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Serve arquivos estáticos da pasta frontend
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
