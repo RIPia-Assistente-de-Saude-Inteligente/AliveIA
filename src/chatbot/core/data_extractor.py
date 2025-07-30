@@ -5,6 +5,7 @@ import re
 import json
 import hashlib
 import logging
+import requests
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -62,6 +63,20 @@ class ConsultationDataExtractor:
         Mensagem do paciente: "{mensagem}"
         """
 
+    def call_llm(payload):
+    try:
+        response = requests.post(
+            "https://api.llm.com/v1/query",
+            json=payload,
+            timeout=5  # 5 segundos
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.Timeout:
+        return {"error": "timeout"}
+    except requests.RequestException as e:
+        return {"error": str(e)}
+    
     def analyze_user_response(self, chatbot_question: str, user_message: str, target_field: str,
                               valid_options: Optional[List[str]] = None) -> Dict[str, Any]:
 
