@@ -5,7 +5,8 @@ from pathlib import Path
 from datetime import datetime
 from dateutil.parser import parse, ParserError
 from src.chatbot.core.data_extractor import ConsultationDataExtractor
-from src.chatbot.data.medical_data import db
+import sqlite3
+import aiosqlite
 
 class FlowManager:
     def __init__(self, flow_file='booking_flow.json', model=None):
@@ -14,8 +15,91 @@ class FlowManager:
             self.flow = json.load(f)
         self.user_conversations = {}
         self.data_extractor = ConsultationDataExtractor()
+        self.db_path = 'src/database/medical_system.db'
         
         logging.info("✅ FlowManager inicializado com validação local de datas")
+
+    def get_specialties(self) -> list[str]:
+        """Busca especialidades diretamente do banco de dados."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("SELECT nome FROM Especialidades ORDER BY nome")
+                return [row[0] for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao buscar especialidades: {e}")
+            return ["Cardiologia", "Dermatologia", "Ortopedia", "Ginecologia", "Pediatria", "Neurologia"]
+
+    def get_exams(self) -> list[str]:
+        """Busca exames diretamente do banco de dados."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("SELECT nome FROM Exames ORDER BY nome")
+                return [row[0] for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao buscar exames: {e}")
+            return ["Hemograma Completo", "Raio-X Tórax", "Ultrassonografia Abdominal", "Eletrocardiograma"]
+
+    def get_locations_by_specialty(self, specialty_name: str) -> list[dict]:
+        """Busca locais por especialidade diretamente do banco de dados."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # Busca locais através dos médicos que atendem a especialidade
+                query = """
+                SELECT DISTINCT l.id_local, l.nome, l.endereco 
+                FROM Locais_Atendimento l
+                JOIN Medico_Especialidades me ON 1=1
+                JOIN Especialidades e ON me.id_especialidade = e.id_especialidade
+                WHERE LOWER(e.nome) = LOWER(?)
+                ORDER BY l.nome
+                """
+                cursor = conn.execute(query, (specialty_name,))
+                rows = cursor.fetchall()
+                locations = [{"id": row[0], "nome": row[1], "endereco": row[2]} for row in rows]
+                
+                # Se não encontrar, retorna todos os locais
+                if not locations:
+                    locations = self.get_all_locations()
+                    
+                return locations
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao buscar locais por especialidade: {e}")
+            return self.get_all_locations()
+
+    def get_locations_for_exam(self, exam_name: str) -> list[dict]:
+        """Busca locais por exame diretamente do banco de dados."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                query = """
+                SELECT l.id_local, l.nome, l.endereco
+                FROM Locais_Atendimento l
+                JOIN Local_Exames le ON l.id_local = le.id_local
+                JOIN Exames e ON le.id_exame = e.id_exame
+                WHERE LOWER(e.nome) LIKE LOWER(?)
+                ORDER BY l.nome
+                """
+                cursor = conn.execute(query, (f"%{exam_name}%",))
+                rows = cursor.fetchall()
+                locations = [{"id": row[0], "nome": row[1], "endereco": row[2]} for row in rows]
+                
+                # Se não encontrar locais específicos, retorna todos os locais
+                if not locations:
+                    return self.get_all_locations()
+                    
+                return locations
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao buscar locais por exame: {e}")
+            return self.get_all_locations()
+
+    def get_all_locations(self) -> list[dict]:
+        """Busca todos os locais de atendimento do banco de dados."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("SELECT id_local, nome, endereco FROM Locais_Atendimento ORDER BY nome")
+                rows = cursor.fetchall()
+                return [{"id": row[0], "nome": row[1], "endereco": row[2]} for row in rows]
+        except sqlite3.Error as e:
+            logging.error(f"Erro ao buscar todos os locais: {e}")
+            return []
 
     def validar_data_agendamento_local(self, entrada_usuario: str) -> dict:
         """
@@ -98,25 +182,21 @@ class FlowManager:
 
         if "especialidade" in target_field:
             try:
-                specialties = db.get_specialties()
+                specialties = self.get_specialties()
                 specialty_list = ", ".join(specialties)
                 message = f"As especialidades disponíveis são: {specialty_list}. Qual delas você gostaria?"
             except Exception as e:
                 logging.error(f"Erro ao buscar especialidades: {e}")
                 message = "Houve um erro ao buscar as especialidades. Por favor, me informe qual especialidade você precisa."
         elif "local" in target_field:
-            # Para o estado de local, mostra apenas locais que atendem a especialidade já escolhida
+            # Para o estado de local, mostra TODOS os locais do banco de dados
             try:
-                selected_specialty = self.user_conversations[user_id]['data'].get('agendamento_info', {}).get('especialidade')
-                if selected_specialty:
-                    locations = db.get_locations_by_specialty(selected_specialty)
-                    if locations:
-                        location_list = ", ".join([loc['nome'] for loc in locations])
-                        message = f"Os locais disponíveis para {selected_specialty} são: {location_list}. Qual você escolhe?"
-                    else:
-                        message = f"Não encontrei locais disponíveis para {selected_specialty}. Por favor, me informe um local de sua preferência."
+                locations = self.get_all_locations()
+                if locations:
+                    location_list = ", ".join([loc['nome'] for loc in locations])
+                    message = f"Os locais disponíveis são: {location_list}. Qual você escolhe?"
                 else:
-                    message = "Primeiro preciso saber a especialidade para mostrar os locais disponíveis."
+                    message = "Não encontrei locais disponíveis. Por favor, me informe um local de sua preferência."
             except Exception as e:
                 logging.error(f"Erro ao buscar locais: {e}")
                 message = "Houve um erro ao buscar os locais. Por favor, me informe qual local você prefere."
@@ -174,16 +254,21 @@ class FlowManager:
         valid_options = None
         if target_field_key == "especialidade":
             try:
-                valid_options = db.get_specialties()
+                valid_options = self.get_specialties()
             except Exception as e:
                 logging.error(f"Erro ao buscar especialidades: {e}")
                 valid_options = []
+        elif target_field_key == "nome_exame":
+            try:
+                valid_options = self.get_exams()
+            except Exception as e:
+                logging.error(f"Erro ao buscar exames: {e}")
+                valid_options = []
         elif target_field_key == "local":
             try:
-                selected_specialty = conversation['data'].get('agendamento_info', {}).get('especialidade')
-                if selected_specialty:
-                    locations = db.get_locations_by_specialty(selected_specialty)
-                    valid_options = [loc['nome'] for loc in locations] if locations else []
+                # Sempre mostra TODOS os locais do banco de dados
+                locations = self.get_all_locations()
+                valid_options = [loc['nome'] for loc in locations] if locations else []
             except Exception as e:
                 logging.error(f"Erro ao buscar locais: {e}")
                 valid_options = []
@@ -231,24 +316,34 @@ class FlowManager:
             if next_state == 'GET_SPECIALTY':
                 # Adiciona lista de especialidades disponíveis
                 try:
-                    specialties = db.get_specialties()
+                    specialties = self.get_specialties()
                     if specialties:
                         specialty_list = ", ".join(specialties)
                         message += f"\n\nEspecialidades disponíveis: {specialty_list}"
                 except Exception as e:
                     logging.error(f"Erro ao buscar especialidades: {e}")
-            elif next_state == 'GET_LOCATION':
-                # Adiciona lista de locais filtrados por especialidade
+            elif next_state == 'GET_EXAM_TYPE':
+                # Adiciona lista de exames disponíveis
                 try:
-                    selected_specialty = conversation['data'].get('agendamento_info', {}).get('especialidade')
-                    if selected_specialty:
-                        locations = db.get_locations_by_specialty(selected_specialty)
-                        if locations:
-                            location_names = [loc['nome'] for loc in locations]
-                            location_list = ", ".join(location_names)
-                            message += f"\n\nLocais disponíveis para {selected_specialty}: {location_list}"
+                    exams = self.get_exams()
+                    if exams:
+                        exam_list = ", ".join(exams)
+                        message += f"\n\nExames disponíveis: {exam_list}"
                 except Exception as e:
-                    logging.error(f"Erro ao buscar locais para especialidade: {e}")
+                    logging.error(f"Erro ao buscar exames: {e}")
+            elif next_state == 'GET_LOCATION':
+                # Sempre mostra TODOS os locais do banco de dados
+                try:
+                    all_locations = self.get_all_locations()
+                    if all_locations:
+                        location_names = [loc['nome'] for loc in all_locations]
+                        location_list = ", ".join(location_names)
+                        message += f"\n\nLocais disponíveis: {location_list}"
+                    else:
+                        message += f"\n\nErro ao carregar locais do banco de dados."
+                except Exception as e:
+                    logging.error(f"Erro ao buscar locais: {e}")
+                    message += f"\n\nErro ao carregar locais. Por favor, informe um local de sua preferência."
             elif next_state == 'CONFIRMATION':
                 message = self._format_confirmation_message(user_id, message)
             elif next_state == 'END':
