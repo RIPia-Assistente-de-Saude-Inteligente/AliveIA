@@ -66,13 +66,13 @@ export function displayExtractedData(data) {
         if (data.paciente.sexo) html += `<span class="data-label">Sexo:</span> ${data.paciente.sexo}<br>`;
         html += '</div><br>';
     }
-    if (data.agendamento_info && Object.values(data.agendamento_info).some(v => v !== null)) {
+    if (data.agendamento_info && Object.values(data.agendamento_info).some(v => v !== null && v !== '' && v !== 'não')) {
         html += '<div class="data-section"><strong>🏥 Agendamento:</strong><br>';
-        if (data.agendamento_info.tipo) html += `<span class="data-label">Tipo:</span> ${data.agendamento_info.tipo}<br>`;
+        if (data.agendamento_info.tipo && data.agendamento_info.tipo !== '' && data.agendamento_info.tipo !== null) html += `<span class="data-label">Tipo:</span> ${data.agendamento_info.tipo}<br>`;
         if (data.agendamento_info.especialidade) html += `<span class="data-label">Especialidade:</span> ${data.agendamento_info.especialidade}<br>`;
         if (data.agendamento_info.nome_exame) html += `<span class="data-label">Exame:</span> ${data.agendamento_info.nome_exame}<br>`;
         if (data.agendamento_info.local) html += `<span class="data-label">Local:</span> ${data.agendamento_info.local}<br>`;
-        if (data.agendamento_info.convenio) html += `<span class="data-label">Convênio:</span> ${data.agendamento_info.convenio}<br>`;
+        if (data.agendamento_info.convenio && data.agendamento_info.convenio !== '' && data.agendamento_info.convenio !== null && data.agendamento_info.convenio !== 'não' && data.agendamento_info.convenio !== 'Não informado') html += `<span class="data-label">Convênio:</span> ${data.agendamento_info.convenio}<br>`;
         html += '</div><br>';
     }
     if (data.contato && Object.values(data.contato).some(v => v !== null)) {
@@ -131,17 +131,24 @@ export function handleAIResponse(data) {
         if (data.current_state === 'CONFIRMATION') {
             let formatted = data.next_question
                 .replace(/\n/g, '<br>')
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*([^*]+)\*/g, '<strong>$1</strong>');
             addMessage('🤖 ' + formatted, 'bot');
         } else {
             // Só mostra a mensagem de sucesso após confirmação do usuário
-            addMessage('✅ ' + data.next_question + '\n\n📋 Dados coletados com sucesso! Você pode revisar as informações no painel lateral e criar o agendamento.', 'success');
+            let formatted = data.next_question
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*([^*]+)\*/g, '<strong>$1</strong>');
+            addMessage('✅ ' + formatted + '<br><br>📋 <strong>Dados coletados com sucesso!</strong> Você pode revisar as informações no painel lateral e criar o agendamento.', 'success');
         }
     } else if (data.status === 'appointment_created') {
         // Agendamento foi criado com sucesso
         let formatted = data.next_question
             .replace(/\n/g, '<br>')
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*([^*]+)\*/g, '<strong>$1</strong>')
+            .replace(/<b>(.*?)<\/b>/g, '<strong>$1</strong>'); // cobre <b> para <strong>
         addMessage(formatted, 'success');
         
         // Resetar o estado para permitir novo agendamento

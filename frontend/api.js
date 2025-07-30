@@ -88,8 +88,16 @@ export async function createAppointmentFromAI() {
         if (data.success) {
             const appointment = data.appointment_data;
             console.log('🔍 Appointment data:', appointment);
-            const successMessage = `\n🎉 **Agendamento criado com sucesso!**\n\n📋 **Detalhes do Agendamento:**\n• **ID:** ${appointment.id_agendamento}\n• **Paciente:** ${appointment.nome_paciente}\n• **Médico:** ${appointment.nome_medico}\n• **Especialidade:** ${appointment.especialidade}\n• **Data/Hora:** ${appointment.data_agendamento || 'Não informado'}\n• **Local:** ${appointment.local}\n• **Convênio:** ${appointment.convenio}\n• **Observações:** ${appointment.observacoes}\n\n✅ Seu agendamento foi confirmado!\n            `;
-            addMessage(markdownToHtml(successMessage), 'success');
+            const successMessage = `\n🎉 <b>Agendamento criado com sucesso!</b>\n\n📋 <b>Detalhes do Agendamento:</b><br>
+• <b>ID:</b> ${appointment.id_agendamento}<br>
+• <b>Paciente:</b> ${appointment.nome_paciente}<br>
+• <b>Médico:</b> ${appointment.nome_medico}<br>
+• <b>Especialidade:</b> ${appointment.especialidade}<br>
+• <b>Data/Hora:</b> ${appointment.data_agendamento || 'Não informado'}<br>
+• <b>Local:</b> ${appointment.local}<br>
+• <b>Convênio:</b> ${appointment.convenio}<br>
+• <b>Observações:</b> ${appointment.observacoes}<br>\n\n✅ <b>Seu agendamento foi confirmado!</b><br>`;
+            addMessage(successMessage, 'success');
             conversationState.canCreateAppointment = false;
             updateUI();
         } else {
